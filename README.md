@@ -4,9 +4,9 @@ A cross-platform (macOS + Windows) auto-clicker with a PySide6 GUI: precise
 intervals down to the millisecond, fixed or follow-cursor targeting, global
 hotkeys, randomised jitter, saved profiles, and proper safety controls.
 
-> **Status:** working. The engine, GUI, hotkeys, safety controls and the
-> coordinate picker are in (milestones M1–M4). Saved profiles and click
-> sequences are next — see [PLAN.md](PLAN.md) for the full design and roadmap.
+> **Status:** feature-complete for daily use (milestones M0–M6). Packaged
+> `.app` / `.exe` builds are still to come — see [PLAN.md](PLAN.md) for the
+> roadmap.
 
 ## Features
 
@@ -22,7 +22,7 @@ hotkeys, randomised jitter, saved profiles, and proper safety controls.
 - **Global hotkeys** for start/stop, panic-stop and position capture, all
   remappable
 - **Safety**: panic hotkey, corner failsafe, start countdown
-- **Profiles** saved as JSON and restored on launch
+- **Profiles** saved as JSON, listed in the window, and restored on launch
 
 ## Requirements
 
@@ -84,6 +84,16 @@ tell you so and offer to open the right settings pane.
 Nothing special for normal use. One exception: a non-elevated process cannot
 send input to a window running as administrator — to click into an elevated
 app, run the autoclicker as administrator too.
+
+## Where settings live
+
+| Platform | Path |
+|---|---|
+| macOS | `~/Library/Application Support/Autoclicker/` |
+| Windows | `%APPDATA%\Autoclicker\` |
+
+Profiles are plain JSON in a `profiles/` subfolder — editable by hand, and a
+corrupt one costs you that profile rather than the app.
 
 ## Development
 

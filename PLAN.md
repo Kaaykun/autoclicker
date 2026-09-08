@@ -256,18 +256,22 @@ is focused, panic key under a 1 ms click storm.
 
 | M | Deliverable | Definition of done |
 |---|---|---|
-| **M0** | Plan + scaffold + private repo | This document, module stubs, README, CI skeleton, first push |
-| **M1** | Core engine | `config`, `scheduler`, `backends`, `engine` + tests green. Drivable from a tiny CLI, no GUI |
-| **M2** | Basic GUI | Interval, click options, repeat, Start/Stop button. Actually clicks |
-| **M3** | Hotkeys + safety | Global toggle + panic + countdown + corner failsafe; macOS permission dialog |
-| **M4** | Targeting | Picker overlay, fixed point, capture hotkey; multi-monitor verified |
-| **M5** | Profiles + jitter | Save/load, jitter controls wired |
-| **M6** | Sequences | Point table, ordered playback |
+| **M0** ✅ | Plan + scaffold + private repo | This document, module stubs, README, CI skeleton, first push |
+| **M1** ✅ | Core engine | `config`, `scheduler`, `backends`, `engine` + tests green. Drivable from a tiny CLI, no GUI |
+| **M2** ✅ | Basic GUI | Interval, click options, repeat, Start/Stop button. Actually clicks |
+| **M3** ✅ | Hotkeys + safety | Global toggle + panic + countdown + corner failsafe; macOS permission dialog |
+| **M4** ✅ | Targeting | Picker overlay, fixed point, capture hotkey; multi-monitor verified |
+| **M5** ✅ | Profiles + jitter | Save/load, jitter controls wired |
+| **M6** ✅ | Sequences | Point table, ordered playback |
 | **M7** | Polish | Dark theme, always-on-top, live stats, tray icon |
 | **M8** | Packaging | PyInstaller specs, tagged release workflow producing `.app` + `.exe` |
 
-M1–M3 is the point at which the app is genuinely useful; everything after is
-depth.
+M0–M6 are done. M7 (polish) and M8 (packaging) remain; M8 in particular needs
+a token with `workflow` scope, since a release workflow is a workflow file.
+
+The two risks below marked as needing real hardware (Retina coordinates, the
+overlay on macOS Spaces) are still unverified — they cannot be checked from
+CI or a headless runner, only by using the app.
 
 ---
 

@@ -1,15 +1,17 @@
 """The main window: assembles the widgets and owns the engine.
 
-Two threading notes that shape this file:
+Three things here are load-bearing:
 
 * Everything the engine, the hotkey listener and the failsafe report arrives
-  through :class:`~autoclicker.ui.bridge.EngineBridge`, never directly.
+  through :class:`~autoclicker.ui.bridge.EngineBridge`, never directly. Those
+  all run on their own threads; widgets may only be touched from this one.
 * The per-click callback is deliberately *not* wired to a signal. At a 1 ms
   interval that would post a thousand queued events a second into the GUI
-  thread purely to redraw a number. Instead a timer polls the engine's counter
-  ten times a second, which also gives us the achieved rate for free -- and the
-  achieved rate is the honest one to show, since below about 5 ms the OS, not
-  this app, decides how fast the clicks really go out.
+  thread purely to redraw a number. A 10 Hz timer polls the engine's counter
+  instead.
+* Hotkey trouble is shown inline, never in a modal dialog. It can fire while
+  the window is still being constructed, and a modal there deadlocks the app
+  before it appears -- which on macOS without Input Monitoring is every launch.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -41,11 +44,13 @@ from ..core.platform_checks import (
     open_privacy_settings,
     permission_guidance,
 )
+from ..core.profiles import ProfileStore, Settings
 from .bridge import EngineBridge
 from .hotkey_dialog import HotkeyDialog
 from .interval_widget import IntervalWidget
 from .options_widget import OptionsWidget
 from .picker_overlay import PickerOverlay
+from .profile_bar import ProfileBar
 from .screens import screen_rects
 from .target_widget import TargetWidget
 from .theme import COLOR_COUNTDOWN, COLOR_ERROR, COLOR_IDLE, COLOR_RUNNING
@@ -55,9 +60,13 @@ POLL_INTERVAL_MS = 100
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, parent=None) -> None:
+    def __init__(self, store: ProfileStore | None = None,
+                 settings: Settings | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Autoclicker")
+
+        self._store = store if store is not None else ProfileStore()
+        self._settings = settings if settings is not None else Settings()
 
         self._backend = PynputBackend()
         self._bridge = EngineBridge()
@@ -66,16 +75,20 @@ class MainWindow(QMainWindow):
         self._hotkey_manager = HotkeyManager(on_error=self._bridge.warningRaised.emit)
         self._failsafe: CornerFailsafe | None = None
         self._overlay: PickerOverlay | None = None
-        self._run_started_at = 0.0
+        #: Guards against a profile load being mistaken for the user editing.
+        self._applying = False
 
         self._build_ui()
         self._connect()
         self._apply_hotkeys(self._hotkeys)
+        self._restore_session()
         QTimer.singleShot(0, self._check_permissions_at_startup)
 
     # ------------------------------------------------------------------ ui
 
     def _build_ui(self) -> None:
+        self.profiles = ProfileBar()
+
         self.notice = QLabel()
         self.notice.setObjectName("warningLabel")
         self.notice.setWordWrap(True)
@@ -103,6 +116,7 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         layout = QVBoxLayout(central)
+        layout.addWidget(self.profiles)
         layout.addWidget(self.notice)
         layout.addWidget(self.interval)
         layout.addWidget(self.options)
@@ -111,7 +125,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(status_row)
         layout.addWidget(self.start_button)
         self.setCentralWidget(central)
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
 
         self._build_menus()
         self._set_status(EngineState.IDLE)
@@ -151,15 +165,23 @@ class MainWindow(QMainWindow):
 
         self.target.pickRequested.connect(self._pick_point)
 
+        for widget in (self.interval, self.options, self.target):
+            widget.changed.connect(self._on_edited)
+
+        self.profiles.profileChosen.connect(self._load_profile)
+        self.profiles.saveRequested.connect(self._save_profile)
+        self.profiles.saveAsRequested.connect(self._save_profile_as)
+        self.profiles.deleteRequested.connect(self._delete_profile)
+
         self._poll = QTimer(self)
         self._poll.setInterval(POLL_INTERVAL_MS)
         self._poll.timeout.connect(self._refresh_counter)
 
     # -------------------------------------------------------------- profile
 
-    def _profile(self) -> Profile:
+    def _profile(self, name: str | None = None) -> Profile:
         return Profile(
-            name="Current",
+            name=name or self.profiles.current_name() or "Current",
             interval=self.interval.value(),
             click=self.options.click_value(),
             repeat=self.options.repeat_value(),
@@ -167,6 +189,78 @@ class MainWindow(QMainWindow):
             safety=self.safety.value(),
             hotkeys=self._hotkeys,
         )
+
+    def _apply_profile(self, profile: Profile) -> None:
+        self._applying = True
+        try:
+            self.interval.set_value(profile.interval)
+            self.options.set_value(profile.click, profile.repeat)
+            self.target.set_value(profile.target)
+            self.safety.set_value(profile.safety)
+            self._apply_hotkeys(profile.hotkeys)
+        finally:
+            self._applying = False
+
+    def _on_edited(self) -> None:
+        """Any manual change means the shown profile no longer matches."""
+        if not self._applying:
+            self.profiles.mark_unsaved()
+
+    def _refresh_profiles(self, current: str | None = None) -> None:
+        self.profiles.set_profiles(self._store.names(), current)
+
+    def _load_profile(self, name: str) -> None:
+        profile = self._store.load(name)
+        if profile is None:
+            self._on_warning(f"Could not read the profile “{name}”.")
+            self._refresh_profiles()
+            return
+        self._apply_profile(profile)
+        self.status.setText(f"Loaded “{name}”")
+
+    def _save_profile(self) -> None:
+        name = self.profiles.current_name()
+        if not name:
+            self._save_profile_as()
+            return
+        self._store.save(self._profile(name))
+        self._refresh_profiles(name)
+        self.status.setText(f"Saved “{name}”")
+
+    def _save_profile_as(self) -> None:
+        name, accepted = QInputDialog.getText(self, "Save profile", "Profile name")
+        name = name.strip()
+        if not accepted or not name:
+            return
+        if name in self._store.names():
+            answer = QMessageBox.question(
+                self, "Replace profile", f"“{name}” already exists. Replace it?"
+            )
+            if answer is not QMessageBox.StandardButton.Yes:
+                return
+        self._store.save(self._profile(name))
+        self._refresh_profiles(name)
+        self.status.setText(f"Saved “{name}”")
+
+    def _delete_profile(self) -> None:
+        name = self.profiles.current_name()
+        if not name:
+            return
+        answer = QMessageBox.question(self, "Delete profile", f"Delete “{name}”?")
+        if answer is not QMessageBox.StandardButton.Yes:
+            return
+        self._store.delete(name)
+        self._refresh_profiles()
+        self.status.setText(f"Deleted “{name}”")
+
+    def _restore_session(self) -> None:
+        stored = self._settings.read()
+        last = stored.get("last_profile")
+        self._refresh_profiles(last if isinstance(last, str) else None)
+        if isinstance(last, str) and last in self._store.names():
+            self._load_profile(last)
+        if stored.get("always_on_top"):
+            self.on_top_action.setChecked(True)
 
     # -------------------------------------------------------------- control
 
@@ -224,16 +318,12 @@ class MainWindow(QMainWindow):
         self._refresh_labels()
 
         reason = StopReason(reason_value)
-        if reason is StopReason.FAILSAFE:
-            self.status.setText("Stopped — screen corner")
-        elif reason is StopReason.PANIC:
-            self.status.setText("Stopped — panic key")
-        elif reason is StopReason.COMPLETED:
-            self.status.setText("Finished")
-        elif reason is StopReason.ERROR:
-            self.status.setText("Error")
-        else:
-            self.status.setText("Idle")
+        self.status.setText({
+            StopReason.FAILSAFE: "Stopped — screen corner",
+            StopReason.PANIC: "Stopped — panic key",
+            StopReason.COMPLETED: "Finished",
+            StopReason.ERROR: "Error",
+        }.get(reason, "Idle"))
         self.status.setToolTip(detail)
 
     def _on_error(self, message: str) -> None:
@@ -242,19 +332,13 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Autoclicker", message)
 
     def _on_warning(self, message: str) -> None:
-        """Something is degraded but usable -- say so in the window.
-
-        Never a dialog: this fires from ``_apply_hotkeys`` during construction,
-        and a modal box there would hang the app before it ever appeared. On
-        macOS without Input Monitoring that is exactly what would happen.
-        """
+        """Degraded but usable. Says so in the window; never a modal."""
         self.notice.setText(message)
         self.notice.show()
 
     def _refresh_counter(self) -> None:
         clicks = self._engine.clicks_fired
-        text = f"{clicks:,} click{'' if clicks == 1 else 's'}"
-        self.counter.setText(text)
+        self.counter.setText(f"{clicks:,} click{'' if clicks == 1 else 's'}")
 
     def _refresh_labels(self) -> None:
         running = self._engine.is_running
@@ -262,7 +346,7 @@ class MainWindow(QMainWindow):
         self.start_button.setText(
             f"Stop  ({toggle_label})" if running else f"Start  ({toggle_label})"
         )
-        for widget in (self.interval, self.options, self.target, self.safety):
+        for widget in (self.profiles, self.interval, self.options, self.target, self.safety):
             widget.setEnabled(not running)
         self.target.set_capture_hint(format_hotkey(self._hotkeys.capture))
 
@@ -288,7 +372,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self._on_error(str(exc))
             return
-        self.target.set_point(x, y)
+        self.target.receive_point(x, y)
         self.status.setText(f"Captured X {x}, Y {y}")
 
     def _pick_point(self) -> None:
@@ -302,7 +386,7 @@ class MainWindow(QMainWindow):
 
     def _on_point_picked(self, x: int, y: int) -> None:
         self._overlay = None
-        self.target.set_point(x, y)
+        self.target.receive_point(x, y)
         self.raise_()
         self.activateWindow()
 
@@ -317,10 +401,7 @@ class MainWindow(QMainWindow):
         # Stop listening first, or pressing F6 to record it would start a run.
         self._hotkey_manager.stop()
         dialog = HotkeyDialog(self._hotkeys, self)
-        if dialog.exec():
-            self._apply_hotkeys(dialog.value())
-        else:
-            self._apply_hotkeys(self._hotkeys)
+        self._apply_hotkeys(dialog.value() if dialog.exec() else self._hotkeys)
 
     def _apply_hotkeys(self, config: HotkeyConfig) -> None:
         self._hotkeys = config
@@ -338,9 +419,8 @@ class MainWindow(QMainWindow):
 
     def _check_permissions_at_startup(self) -> None:
         report = check_permissions()
-        if report.all_clear:
-            return
-        self._permission_dialog(report)
+        if not report.all_clear:
+            self._permission_dialog(report)
 
     def _show_permissions(self) -> None:
         report = check_permissions()
@@ -402,6 +482,13 @@ class MainWindow(QMainWindow):
             self._failsafe.stop()
         if self._overlay is not None:
             self._overlay.finish()
+        try:
+            self._settings.update(
+                last_profile=self.profiles.current_name(),
+                always_on_top=self.on_top_action.isChecked(),
+            )
+        except OSError:
+            pass
         super().closeEvent(event)
 
 

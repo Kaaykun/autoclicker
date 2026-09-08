@@ -51,8 +51,12 @@ class TargetMode(str, Enum):
 def _enum(cls: type[Enum], value: Any, default: Enum) -> Any:
     """Coerce ``value`` to a member of ``cls``, falling back to ``default``.
 
-    Profiles are user-editable JSON on disk, so an unknown string is a
-    plausible input rather than a programming error.
+    Called from ``__post_init__`` as well as from the JSON loaders, because
+    these fields arrive from three directions and only one of them is typed:
+    JSON on disk, CLI strings, and Qt. That last one is the surprising case --
+    a combo box round-trips its data through QVariant, and a ``str`` Enum comes
+    back out as a plain ``str``. It compares equal to the member, so nothing
+    looks wrong until something reaches for ``.value``.
     """
     try:
         return cls(value)
@@ -71,6 +75,9 @@ class IntervalConfig:
     jitter_mode: JitterMode = JitterMode.OFF
     #: Percent (0-100) when mode is PERCENT, milliseconds when mode is MILLIS.
     jitter_amount: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.jitter_mode = _enum(JitterMode, self.jitter_mode, JitterMode.OFF)
 
     @property
     def total_ms(self) -> float:
@@ -126,6 +133,10 @@ class ClickConfig:
     inter_click_gap_ms: float = 0.0
     #: How long the button stays held on each press.
     hold_ms: float = 0.0
+
+    def __post_init__(self) -> None:
+        self.button = _enum(MouseButton, self.button, MouseButton.LEFT)
+        self.click_type = _enum(ClickType, self.click_type, ClickType.SINGLE)
 
     def validate(self) -> list[str]:
         problems: list[str] = []
@@ -188,6 +199,10 @@ class SequencePoint:
     #: Overrides the global interval after this point when > 0.
     delay_after_ms: float = 0.0
 
+    def __post_init__(self) -> None:
+        self.button = _enum(MouseButton, self.button, MouseButton.LEFT)
+        self.click_type = _enum(ClickType, self.click_type, ClickType.SINGLE)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "x": self.x,
@@ -221,6 +236,9 @@ class TargetConfig:
     y: int = 0
     position_jitter_px: int = 0
     sequence: list[SequencePoint] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.mode = _enum(TargetMode, self.mode, TargetMode.FOLLOW_CURSOR)
 
     def validate(self) -> list[str]:
         problems: list[str] = []

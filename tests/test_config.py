@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from autoclicker.core.config import (
+    ClickConfig,
     ClickType,
     HotkeyConfig,
     IntervalConfig,
@@ -106,3 +107,28 @@ def test_fast_interval_produces_a_warning_not_an_error() -> None:
     profile = Profile(interval=IntervalConfig(millis=2))
     assert profile.validate() == []
     assert profile.warnings()
+
+
+def test_plain_strings_are_coerced_to_enums_on_construction() -> None:
+    """Qt hands back plain strings for str Enums, and so does hand-written JSON.
+
+    They compare equal to the member, so the mistake is invisible right up
+    until something reaches for ``.value``.
+    """
+    click = ClickConfig(button="right", click_type="double")
+    assert click.button is MouseButton.RIGHT
+    assert click.click_type is ClickType.DOUBLE
+    assert click.to_dict()["button"] == "right"
+
+    interval = IntervalConfig(jitter_mode="percent", jitter_amount=10)
+    assert interval.jitter_mode is JitterMode.PERCENT
+
+    target = TargetConfig(mode="sequence", sequence=[SequencePoint(button="middle")])
+    assert target.mode is TargetMode.SEQUENCE
+    assert target.sequence[0].button is MouseButton.MIDDLE
+
+    assert Profile(interval=interval, click=click, target=target).to_json()
+
+
+def test_a_nonsense_string_falls_back_rather_than_raising() -> None:
+    assert ClickConfig(button="telepathy").button is MouseButton.LEFT
