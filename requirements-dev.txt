@@ -3,3 +3,6 @@
 -r requirements.txt
 pytest>=8.0
 ruff>=0.5
+pillow>=10.0
+numpy>=1.26
+pyinstaller>=6.6

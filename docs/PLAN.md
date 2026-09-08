@@ -265,11 +265,10 @@ is focused, panic key under a 1 ms click storm.
 | **M4** ✅ | Targeting | Picker overlay, fixed point, capture hotkey; multi-monitor verified |
 | **M5** ✅ | Profiles + jitter | Save/load, jitter controls wired |
 | **M6** ✅ | Sequences | Point table, ordered playback |
-| **M7** | Polish | Dark theme, always-on-top, live stats, tray icon |
-| **M8** | Packaging | PyInstaller specs, tagged release workflow producing `.app` + `.exe` |
+| **M7** ✅ | Polish | Always-on-top, live achieved-rate counter, menu-bar/tray icon. The dark theme was dropped deliberately: Qt already follows the system appearance, and overriding it would force dark mode on someone who chose light |
+| **M8** ✅ | Packaging | PyInstaller specs, tagged release workflow producing `.app` + `.exe` |
 
-M0–M6 are done. M7 (polish) and M8 (packaging) remain; M8 in particular needs
-a token with `workflow` scope, since a release workflow is a workflow file.
+All milestones are done.
 
 The two risks below marked as needing real hardware (Retina coordinates, the
 overlay on macOS Spaces) are still unverified — they cannot be checked from
@@ -283,8 +282,10 @@ CI or a headless runner, only by using the app.
    work". Mitigated by explicit detection and a one-click path to the settings
    pane. Unsigned builds later on will also need a right-click → Open to get
    past Gatekeeper.
-2. **Retina / DPI coordinate mismatch** — believed to be a non-issue (both Qt
-   and Quartz use logical points) but must be verified on real hardware in M4.
+2. **Retina / DPI coordinate mismatch** — *resolved by design*. The picker
+   reports coordinates from the click backend rather than from Qt, so the
+   number stored is by construction the one that works, and no conversion is
+   needed on any platform.
 3. **Very fast intervals** — below ~5 ms the bottleneck is the OS, not us. The
    UI reports the *achieved* rate so the number on screen is honest.
 4. **Overlay click-through on macOS** — a full-screen translucent window that

@@ -1,7 +1,7 @@
-"""Parsing and formatting durations the way people actually type them.
+"""Formatting numbers for people: durations, and the click counter.
 
-Used by the sequence table's delay column. Kept out of the ``ui`` package
-because it is pure text handling and deserves tests that do not need Qt.
+Kept out of the ``ui`` package because it is pure text handling and deserves
+tests that do not need Qt.
 """
 
 from __future__ import annotations
@@ -58,3 +58,21 @@ def format_duration(millis: float, unit: str = SECONDS) -> str:
         unit = SECONDS
     value = millis / _UNITS[unit]
     return f"{value:g} {unit}"
+
+
+def format_counter(clicks: int, elapsed_s: float | None = None) -> str:
+    """The click counter, with the rate actually achieved when known.
+
+    The achieved rate is the honest one to show. Below roughly 5 ms the
+    operating system, not this app, decides how fast clicks really go out, so a
+    counter that echoed the requested rate back would be quietly lying.
+    """
+    label = f"{clicks:,} click{'' if clicks == 1 else 's'}"
+    if elapsed_s is None or elapsed_s < 0.5 or clicks < 2:
+        return label
+    rate = clicks / elapsed_s
+    if rate >= 10:
+        return f"{label}  ·  {rate:.0f}/s"
+    if rate >= 1:
+        return f"{label}  ·  {rate:.1f}/s"
+    return f"{label}  ·  {rate:.2f}/s"

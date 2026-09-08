@@ -16,18 +16,23 @@ Three things here are load-bearing:
 
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -46,8 +51,10 @@ from ..core.platform_checks import (
 )
 from ..core.profiles import ProfileStore, Settings
 from ..core.recorder import ClickRecorder, points_from_events
+from ..core.units import format_counter
 from .bridge import EngineBridge
 from .hotkey_dialog import HotkeyDialog
+from .icons import app_icon, tray_icon
 from .interval_widget import IntervalWidget
 from .options_widget import OptionsWidget
 from .picker_overlay import PickerOverlay
@@ -66,6 +73,7 @@ class MainWindow(QMainWindow):
                  recorder: ClickRecorder | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Autoclicker")
+        self.setWindowIcon(app_icon())
 
         self._store = store if store is not None else ProfileStore()
         self._settings = settings if settings is not None else Settings()
@@ -82,13 +90,20 @@ class MainWindow(QMainWindow):
             ignore=self._is_over_this_window,
         )
         self._recording = False
+        self._tray: QSystemTrayIcon | None = None
+        self._quitting = False
+        self._run_started_at: float | None = None
         #: Guards against a profile load being mistaken for the user editing.
         self._applying = False
 
         self._build_ui()
         self._connect()
+        self._build_tray()
         self._apply_hotkeys(self._hotkeys)
         self._restore_session()
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._shutdown)
         QTimer.singleShot(0, self._check_permissions_at_startup)
 
     # ------------------------------------------------------------------ ui
@@ -165,6 +180,11 @@ class MainWindow(QMainWindow):
         self.on_top_action.setCheckable(True)
         self.on_top_action.toggled.connect(self._set_always_on_top)
         settings.addAction(self.on_top_action)
+
+        self.keep_in_tray_action = QAction("Keep running when the window closes", self)
+        self.keep_in_tray_action.setCheckable(True)
+        self.keep_in_tray_action.toggled.connect(self._apply_tray_preference)
+        settings.addAction(self.keep_in_tray_action)
 
         help_menu = self.menuBar().addMenu("&Help")
         permissions_action = QAction("Permissions…", self)
@@ -288,6 +308,9 @@ class MainWindow(QMainWindow):
             self._load_profile(last)
         if stored.get("always_on_top"):
             self.on_top_action.setChecked(True)
+        self.keep_in_tray_action.setEnabled(self._tray is not None)
+        if stored.get("keep_in_tray") and self._tray is not None:
+            self.keep_in_tray_action.setChecked(True)
 
     # -------------------------------------------------------------- control
 
@@ -333,8 +356,14 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------------- events
 
     def _on_state(self, state_value: str) -> None:
-        self._set_status(EngineState(state_value))
+        state = EngineState(state_value)
+        if state is EngineState.RUNNING:
+            # Time the achieved rate from the first click, not from the button
+            # press, or a countdown would drag the average down.
+            self._run_started_at = time.monotonic()
+        self._set_status(state)
         self._refresh_labels()
+        self._update_tray()
 
     def _on_countdown(self, remaining: float) -> None:
         self.status.setText(f"Starting in {remaining:.1f}s…")
@@ -345,7 +374,9 @@ class MainWindow(QMainWindow):
             self._failsafe.stop()
             self._failsafe = None
         self._refresh_counter()
+        self._run_started_at = None
         self._refresh_labels()
+        self._update_tray()
 
         reason = StopReason(reason_value)
         self.status.setText({
@@ -367,8 +398,11 @@ class MainWindow(QMainWindow):
         self.notice.show()
 
     def _refresh_counter(self) -> None:
-        clicks = self._engine.clicks_fired
-        self.counter.setText(f"{clicks:,} click{'' if clicks == 1 else 's'}")
+        elapsed = None
+        if self._run_started_at is not None:
+            elapsed = time.monotonic() - self._run_started_at
+        self.counter.setText(format_counter(self._engine.clicks_fired, elapsed))
+        self._update_tray()
 
     def _refresh_labels(self) -> None:
         running = self._engine.is_running
@@ -428,6 +462,73 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    # ----------------------------------------------------------------- tray
+
+    def _build_tray(self) -> None:
+        """A menu-bar / system-tray control, when the desktop offers one."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+
+        self._tray = QSystemTrayIcon(tray_icon(running=False), self)
+        menu = QMenu()
+
+        self._tray_toggle = QAction("Start", self)
+        self._tray_toggle.triggered.connect(self._toggle)
+        menu.addAction(self._tray_toggle)
+        menu.addSeparator()
+
+        show_action = QAction("Show window", self)
+        show_action.triggered.connect(self._show_window)
+        menu.addAction(show_action)
+
+        quit_action = QAction("Quit Autoclicker", self)
+        quit_action.triggered.connect(self._quit)
+        menu.addAction(quit_action)
+
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+        self._update_tray()
+
+    def _on_tray_activated(self, reason) -> None:
+        # macOS opens the menu on any click; elsewhere a plain click should
+        # bring the window back.
+        if reason is QSystemTrayIcon.ActivationReason.Trigger:
+            self._show_window()
+
+    def _show_window(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _update_tray(self) -> None:
+        if self._tray is None:
+            return
+        running = self._engine.is_running
+        self._tray.setIcon(tray_icon(running=running))
+        self._tray_toggle.setText("Stop" if running else "Start")
+        self._tray.setToolTip(
+            f"Autoclicker — {'running' if running else 'idle'}"
+            f"\n{format_counter(self._engine.clicks_fired)}"
+        )
+
+    def _apply_tray_preference(self, enabled: bool) -> None:
+        """Decide whether closing the window quits the app."""
+        keep = bool(enabled) and self._tray is not None
+        app = QApplication.instance()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(not keep)
+        self.keep_in_tray_action.setEnabled(self._tray is not None)
+        if self._tray is None and enabled:
+            self.keep_in_tray_action.setChecked(False)
+            self._on_warning("This desktop has no system tray, so the window has to stay open.")
+
+    def _quit(self) -> None:
+        self._quitting = True
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
     # ------------------------------------------------------------ recording
 
     def _toggle_recording(self) -> None:
@@ -458,6 +559,9 @@ class MainWindow(QMainWindow):
     def _finish_recording(self) -> None:
         events = self._recorder.stop()
         self._recording = False
+        self._tray: QSystemTrayIcon | None = None
+        self._quitting = False
+        self._run_started_at: float | None = None
         points = points_from_events(events, keep_timing=self.target.editor.keep_timing())
         self.target.editor.set_recording(False)
         self.target.editor.append_points(points)
@@ -560,7 +664,8 @@ class MainWindow(QMainWindow):
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
         self.show()
 
-    def closeEvent(self, event: QCloseEvent) -> None:
+    def _shutdown(self) -> None:
+        """Tear everything down. Runs on a real quit, whichever path got there."""
         self._engine.stop()
         self._recorder.stop()
         self._hotkey_manager.stop()
@@ -568,13 +673,37 @@ class MainWindow(QMainWindow):
             self._failsafe.stop()
         if self._overlay is not None:
             self._overlay.finish()
+        if self._tray is not None:
+            self._tray.hide()
         try:
             self._settings.update(
                 last_profile=self.profiles.current_name(),
                 always_on_top=self.on_top_action.isChecked(),
+                keep_in_tray=self.keep_in_tray_action.isChecked(),
             )
         except OSError:
             pass
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        keeping = (
+            self.keep_in_tray_action.isChecked()
+            and self._tray is not None
+            and not self._quitting
+        )
+        if keeping:
+            # Hide rather than quit, so the hotkeys keep working. Quit is in
+            # the tray menu -- and it has to be, or the app becomes unkillable
+            # from the UI.
+            event.ignore()
+            self.hide()
+            self._tray.showMessage(
+                "Autoclicker",
+                "Still running. Use the tray icon to start, stop or quit.",
+                tray_icon(running=self._engine.is_running),
+                4000,
+            )
+            return
+        self._shutdown()
         super().closeEvent(event)
 
 

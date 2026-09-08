@@ -6,6 +6,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from .icons import app_icon
 from .main_window import MainWindow
 from .theme import apply_theme
 
@@ -14,6 +15,7 @@ def run(argv: list[str] | None = None) -> int:
     app = QApplication(argv if argv is not None else sys.argv[:1])
     app.setApplicationName("Autoclicker")
     app.setApplicationDisplayName("Autoclicker")
+    app.setWindowIcon(app_icon())
     apply_theme(app)
 
     window = MainWindow()

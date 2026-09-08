@@ -1,0 +1,81 @@
+name: Release
+
+# Tag a commit to build:  git tag v0.1.0 && git push --tags
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: Autoclicker-macos
+          - os: windows-latest
+            artifact: Autoclicker-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Sync
+        run: uv sync --locked
+
+      # iconutil only exists on macOS, so the .icns is produced here rather
+      # than committed. The .ico is written on either platform.
+      - name: Build icons
+        run: uv run python tools/make_icons.py
+
+      - name: Build app
+        run: uv run pyinstaller --noconfirm autoclicker.spec
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -qry ../${{ matrix.artifact }}.zip Autoclicker.app
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/Autoclicker/* -DestinationPath ${{ matrix.artifact }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"
+          # These builds are unsigned. Say so where people will actually read it.
+          body: |
+            Unsigned builds.
+
+            **macOS** — the first launch is blocked by Gatekeeper. Right-click
+            `Autoclicker.app` → **Open** → **Open**. Then grant Accessibility
+            and Input Monitoring in System Settings → Privacy & Security, and
+            restart the app. Each new version is a new binary to macOS, so the
+            permissions have to be granted again after an update.
+
+            **Windows** — SmartScreen will warn on first run. **More info** →
+            **Run anyway**. To click into an app running as administrator, run
+            Autoclicker as administrator too.
+          generate_release_notes: true

@@ -62,3 +62,31 @@ def test_formatting_and_parsing_round_trip() -> None:
     for millis in (0.0, 1.0, 250.0, 1000.0, 1500.0, 60_000.0):
         for unit in ("s", "ms"):
             assert parse_duration(format_duration(millis, unit), unit) == millis
+
+
+# --------------------------------------------------------------- counter
+
+
+def test_the_counter_is_plain_until_there_is_a_rate_worth_showing() -> None:
+    from autoclicker.core.units import format_counter
+
+    assert format_counter(0) == "0 clicks"
+    assert format_counter(1) == "1 click"
+    assert format_counter(5) == "5 clicks"
+    # Too early to divide by: a 0.1 s sample would report wild numbers.
+    assert format_counter(5, 0.2) == "5 clicks"
+    assert format_counter(1, 10.0) == "1 click"
+
+
+def test_the_counter_reports_the_rate_actually_achieved() -> None:
+    from autoclicker.core.units import format_counter
+
+    assert format_counter(1000, 10.0) == "1,000 clicks  ·  100/s"
+    assert format_counter(25, 10.0) == "25 clicks  ·  2.5/s"
+    assert format_counter(3, 10.0) == "3 clicks  ·  0.30/s"
+
+
+def test_large_counts_stay_readable() -> None:
+    from autoclicker.core.units import format_counter
+
+    assert format_counter(1234567).startswith("1,234,567 clicks")

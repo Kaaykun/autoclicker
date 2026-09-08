@@ -4,9 +4,8 @@ A cross-platform (macOS + Windows) auto-clicker with a PySide6 GUI: precise
 intervals down to the millisecond, fixed or follow-cursor targeting, global
 hotkeys, randomised jitter, saved profiles, and proper safety controls.
 
-> **Status:** feature-complete for daily use (milestones M0–M6). Packaged
-> `.app` / `.exe` builds are still to come — see [docs/PLAN.md](docs/PLAN.md) for the
-> roadmap.
+> **Status:** complete. All milestones (M0–M8) are done — see
+> [docs/PLAN.md](docs/PLAN.md) for the design and history.
 
 ## Features
 
@@ -27,6 +26,9 @@ hotkeys, randomised jitter, saved profiles, and proper safety controls.
   remappable
 - **Safety**: panic hotkey, corner failsafe, optional start countdown
 - **Profiles** saved as JSON, listed in the window, and restored on launch
+- **Menu-bar / tray icon** to start, stop and quit without the window, with an
+  option to keep running when the window is closed
+- **Live counter** showing the rate actually achieved, not the one requested
 
 ## Requirements
 
@@ -145,6 +147,43 @@ uv run autoclicker --cli --check-pointer
 It nudges the pointer a few times, reports how long each move took to apply,
 and puts it back where it started.
 
+## Building a standalone app
+
+```bash
+uv run python tools/make_icons.py        # once, or after changing the artwork
+uv run pyinstaller autoclicker.spec
+```
+
+The result lands in `dist/` — `Autoclicker.app` on macOS, `Autoclicker/` with
+`Autoclicker.exe` on Windows. Tag a commit (`git tag v0.1.0 && git push --tags`)
+and GitHub Actions builds both and attaches them to a release.
+
+**These builds are unsigned**, which has consequences worth knowing:
+
+- **macOS** blocks the first launch. Right-click `Autoclicker.app` → **Open** →
+  **Open**. Gatekeeper remembers the choice for that copy.
+- macOS ties Accessibility and Input Monitoring to the specific binary, and an
+  unsigned rebuild is a different binary. **Expect to re-grant both after every
+  update.** Signing with a paid Apple Developer ID is what fixes this properly.
+- **Windows** SmartScreen warns on first run: **More info** → **Run anyway**.
+
+Running from source with `uv run autoclicker` avoids all of this, because the
+permissions attach to your terminal instead and stay put.
+
+### Icons
+
+`autoclicker/resources/icon.png` is the master, 1024×1024. `tools/make_icons.py`
+turns it into what each platform actually wants:
+
+- **macOS** gets the rounded artwork inset onto Apple's 824-in-1024 grid, so it
+  sits the same size as its neighbours in the Dock. macOS does not mask app
+  icons, so the rounded corners have to be in the file.
+- **Windows** gets a squared, full-bleed variant. Windows does not mask icons
+  either and has no corner convention, so baked-in rounded corners show up as
+  transparent notches against a taskbar highlight or an Explorer selection
+  tint. The tool extends the background gradient outward into the corners
+  rather than filling them flat, so the colours continue seamlessly.
+
 ## Where settings live
 
 | Platform | Path |
@@ -172,7 +211,13 @@ uv add --dev somepackage     # tooling
 Both update `pyproject.toml` and `uv.lock` together. Commit both.
 
 The `core/` package holds no Qt imports and is fully testable headless; the
-click backend is injectable, so the test suite never fires a real click.
+click backend is injectable, so the test suite never fires a real click. The
+GUI tests build real widgets against Qt's offscreen platform plugin, so they
+need no display.
+
+The Qt dependency is `PySide6-Essentials` rather than the full `PySide6`: this
+app imports only QtCore, QtGui and QtWidgets, and the Addons half is several
+hundred megabytes that would otherwise end up inside every packaged build.
 
 ## A note on use
 

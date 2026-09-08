@@ -46,3 +46,21 @@ Things CI can't verify. Run before tagging a release.
 - [ ] macOS: permission dialog appears when Accessibility is not granted
 - [ ] macOS: the "Open settings" button lands on the right pane
 - [ ] Windows: clicks into a normal window; documented failure into an elevated one
+
+## Menu bar / tray
+- [ ] The tray icon appears, and its glyph is filled while running and hollow while idle
+- [ ] Start and Stop from the tray menu work while the window is hidden
+- [ ] With "Keep running when the window closes" on, closing hides the window
+      and the hotkeys still work
+- [ ] Quit from the tray menu actually exits
+- [ ] The click counter shows a rate while running, and drops it when stopped
+
+## Packaged build
+- [ ] `uv run pyinstaller autoclicker.spec` produces a launchable app
+- [ ] The app icon is the artwork, not the default Python icon — Dock, taskbar,
+      window and Cmd-Tab
+- [ ] On Windows the icon has no transparent corner notches against a taskbar
+      highlight
+- [ ] The packaged app can click and can register hotkeys (this is the one that
+      catches a missing pynput backend in the bundle)
+- [ ] Gatekeeper: right-click → Open works on the first launch

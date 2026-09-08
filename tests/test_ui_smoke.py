@@ -579,3 +579,86 @@ def test_the_record_hotkey_is_part_of_the_config_and_conflict_checked() -> None:
     assert HotkeyConfig().record == "<f9>"
     assert HotkeyConfig().validate() == []
     assert HotkeyConfig(record="<f6>").validate()
+
+
+# --------------------------------------------------------------------- icons
+
+
+def test_the_supplied_artwork_is_picked_up(qt_app) -> None:
+    from autoclicker.ui.icons import app_icon, has_custom_artwork
+
+    assert has_custom_artwork(), "autoclicker/resources/icon.png should be committed"
+    icon = app_icon()
+    assert not icon.isNull()
+    assert icon.availableSizes(), "the icon should carry at least one real size"
+
+
+def test_windows_prefers_the_squared_artwork(qt_app, monkeypatch) -> None:
+    """Windows does not mask icons, so baked-in rounded corners read as notches
+    against a taskbar highlight."""
+    from autoclicker.ui import icons
+
+    monkeypatch.setattr(icons.sys, "platform", "win32")
+    chosen = icons._first_existing(icons.APP_ICON_NAMES_WINDOWS)
+    assert chosen is not None and chosen.name == "icon-square.png"
+
+    monkeypatch.setattr(icons.sys, "platform", "darwin")
+    chosen = icons._first_existing(icons.APP_ICON_NAMES)
+    assert chosen is not None and chosen.name == "icon.png"
+
+
+def test_the_tray_glyph_differs_between_running_and_idle(qt_app) -> None:
+    """It has to differ by shape: macOS strips the colour from menu-bar icons."""
+    from autoclicker.ui.icons import _draw_tray_glyph
+
+    idle = _draw_tray_glyph(44, filled=False).toImage()
+    running = _draw_tray_glyph(44, filled=True).toImage()
+    assert idle != running
+
+    centre = idle.rect().center()
+    assert idle.pixelColor(centre).alpha() == 0, "idle is a hollow ring"
+    assert running.pixelColor(centre).alpha() > 0, "running is filled"
+
+
+def test_icons_still_work_with_no_artwork_at_all(qt_app, monkeypatch, tmp_path) -> None:
+    from autoclicker.ui import icons
+
+    monkeypatch.setattr(icons, "RESOURCE_DIR", tmp_path)
+    assert not icons.has_custom_artwork()
+    assert not icons.app_icon().isNull()
+    assert not icons.tray_icon(running=False).isNull()
+
+
+# ---------------------------------------------------------------------- tray
+
+
+def test_the_window_survives_a_desktop_with_no_tray(qt_app, tmp_path) -> None:
+    """The offscreen platform has no tray, which is the case worth covering:
+    the close-to-tray option must not be offerable, or the window becomes
+    closable into nothing."""
+    window = _window(tmp_path)
+    try:
+        if window._tray is None:
+            assert not window.keep_in_tray_action.isEnabled()
+            window.keep_in_tray_action.setChecked(True)
+            assert not window.keep_in_tray_action.isChecked()
+    finally:
+        window.close()
+
+
+def test_the_counter_reports_the_achieved_rate_while_running(qt_app, tmp_path) -> None:
+    import time
+
+    window = _window(tmp_path)
+    try:
+        window._engine.clicks_fired = 500
+        window._run_started_at = time.monotonic() - 10.0
+        window._refresh_counter()
+        assert "500 clicks" in window.counter.text()
+        assert "/s" in window.counter.text()
+
+        window._run_started_at = None
+        window._refresh_counter()
+        assert window.counter.text() == "500 clicks"
+    finally:
+        window.close()
