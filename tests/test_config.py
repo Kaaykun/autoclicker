@@ -31,18 +31,34 @@ from autoclicker.core.config import (
     ],
 )
 def test_interval_total_ms(kwargs: dict[str, int], expected_ms: int) -> None:
-    assert IntervalConfig(**{"millis": 0, **kwargs}).total_ms == expected_ms
+    blank = {"hours": 0, "minutes": 0, "seconds": 0, "millis": 0}
+    assert IntervalConfig(**{**blank, **kwargs}).total_ms == expected_ms
 
 
 def test_interval_rejects_zero_and_negative() -> None:
-    assert IntervalConfig(millis=0).validate()
-    assert IntervalConfig(millis=-5).validate()
-    assert IntervalConfig(millis=1).validate() == []
+    assert IntervalConfig(seconds=0, millis=0).validate()
+    assert IntervalConfig(seconds=0, millis=-5).validate()
+    assert IntervalConfig(seconds=0, millis=1).validate() == []
 
 
 def test_percentage_jitter_is_bounded() -> None:
     assert IntervalConfig(jitter_mode=JitterMode.PERCENT, jitter_amount=150).validate()
     assert IntervalConfig(jitter_mode=JitterMode.PERCENT, jitter_amount=20).validate() == []
+
+
+def test_the_default_interval_is_one_second() -> None:
+    assert IntervalConfig().total_ms == 1000
+    assert Profile().interval.total_ms == 1000
+
+
+def test_interval_components_load_all_or_nothing() -> None:
+    """A partial interval must not pick up the 1-second default per field.
+
+    Otherwise {"millis": 250} would quietly load as 1.25 seconds.
+    """
+    assert IntervalConfig.from_dict({"millis": 250}).total_ms == 250
+    assert IntervalConfig.from_dict({"seconds": 3}).total_ms == 3000
+    assert IntervalConfig.from_dict({}).total_ms == 1000
 
 
 def test_click_type_counts() -> None:
@@ -100,11 +116,11 @@ def test_unknown_enum_values_fall_back_instead_of_exploding() -> None:
 def test_future_schema_version_degrades_to_defaults() -> None:
     profile = Profile.from_dict({"schema_version": 999, "name": "From the future"})
     assert profile.name == "From the future"
-    assert profile.interval.total_ms == 100
+    assert profile.interval.total_ms == 1000
 
 
 def test_fast_interval_produces_a_warning_not_an_error() -> None:
-    profile = Profile(interval=IntervalConfig(millis=2))
+    profile = Profile(interval=IntervalConfig(seconds=0, millis=2))
     assert profile.validate() == []
     assert profile.warnings()
 

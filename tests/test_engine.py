@@ -30,7 +30,7 @@ TIMEOUT = 5.0
 def fast_profile(**overrides) -> Profile:
     """A profile that runs flat out with no countdown, for quick tests."""
     base = {
-        "interval": IntervalConfig(millis=1),
+        "interval": IntervalConfig(seconds=0, millis=1),
         "safety": SafetyConfig(countdown_seconds=0.0),
         "repeat": RepeatConfig(until_stopped=False, count=5),
     }
@@ -100,7 +100,7 @@ def test_button_and_click_type_reach_the_backend() -> None:
 
 def test_until_stopped_keeps_going_and_stops_promptly() -> None:
     profile = fast_profile(
-        interval=IntervalConfig(millis=5),
+        interval=IntervalConfig(seconds=0, millis=5),
         repeat=RepeatConfig(until_stopped=True),
     )
     backend = FakeBackend()
@@ -121,7 +121,7 @@ def test_until_stopped_keeps_going_and_stops_promptly() -> None:
 def test_a_long_interval_still_stops_immediately() -> None:
     """The stop must not wait for the current sleep to elapse."""
     profile = fast_profile(
-        interval=IntervalConfig(hours=1),
+        interval=IntervalConfig(hours=1, seconds=0),
         repeat=RepeatConfig(until_stopped=True),
     )
     backend = FakeBackend()
@@ -266,13 +266,13 @@ def test_a_broken_callback_does_not_kill_the_run() -> None:
 def test_an_invalid_profile_is_refused_before_anything_starts() -> None:
     engine = ClickEngine(FakeBackend())
     with pytest.raises(ValueError, match="at least"):
-        engine.start(fast_profile(interval=IntervalConfig(millis=0)))
+        engine.start(fast_profile(interval=IntervalConfig(seconds=0, millis=0)))
     assert not engine.is_running
 
 
 def test_starting_twice_does_not_spawn_a_second_thread() -> None:
     profile = fast_profile(
-        interval=IntervalConfig(millis=20),
+        interval=IntervalConfig(seconds=0, millis=20),
         repeat=RepeatConfig(until_stopped=True),
     )
     backend = FakeBackend()

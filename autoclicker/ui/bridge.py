@@ -34,6 +34,9 @@ class EngineBridge(QObject):
     toggleRequested = Signal()
     panicRequested = Signal()
     captureRequested = Signal()
+    recordRequested = Signal()
+    #: Clicks captured so far, emitted from the recorder's listener thread.
+    recordCountChanged = Signal(int)
     failsafeTripped = Signal()
 
     def callbacks(self) -> EngineCallbacks:

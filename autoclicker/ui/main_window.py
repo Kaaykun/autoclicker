@@ -16,7 +16,7 @@ Three things here are load-bearing:
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -45,6 +45,7 @@ from ..core.platform_checks import (
     permission_guidance,
 )
 from ..core.profiles import ProfileStore, Settings
+from ..core.recorder import ClickRecorder, points_from_events
 from .bridge import EngineBridge
 from .hotkey_dialog import HotkeyDialog
 from .interval_widget import IntervalWidget
@@ -61,7 +62,8 @@ POLL_INTERVAL_MS = 100
 
 class MainWindow(QMainWindow):
     def __init__(self, store: ProfileStore | None = None,
-                 settings: Settings | None = None, parent=None) -> None:
+                 settings: Settings | None = None,
+                 recorder: ClickRecorder | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Autoclicker")
 
@@ -75,6 +77,11 @@ class MainWindow(QMainWindow):
         self._hotkey_manager = HotkeyManager(on_error=self._bridge.warningRaised.emit)
         self._failsafe: CornerFailsafe | None = None
         self._overlay: PickerOverlay | None = None
+        self._recorder = recorder if recorder is not None else ClickRecorder(
+            on_event=self._bridge.recordCountChanged.emit,
+            ignore=self._is_over_this_window,
+        )
+        self._recording = False
         #: Guards against a profile load being mistaken for the user editing.
         self._applying = False
 
@@ -112,20 +119,36 @@ class MainWindow(QMainWindow):
 
         self.start_button = QPushButton()
         self.start_button.setObjectName("primaryButton")
+        self.start_button.setMinimumHeight(42)
+        self.start_button.setDefault(True)
         self.start_button.clicked.connect(self._toggle)
+
+        # Two columns: the settings stack on the left, the target -- which
+        # grows a whole table when a sequence is open -- on the right. One tall
+        # column made the window taller than most laptop screens.
+        left = QVBoxLayout()
+        left.addWidget(self.profiles)
+        left.addWidget(self.interval)
+        left.addWidget(self.options)
+        left.addWidget(self.safety)
+        left.addStretch(1)
+
+        right = QVBoxLayout()
+        right.addWidget(self.target)
+
+        columns = QHBoxLayout()
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
 
         central = QWidget()
         layout = QVBoxLayout(central)
-        layout.addWidget(self.profiles)
         layout.addWidget(self.notice)
-        layout.addWidget(self.interval)
-        layout.addWidget(self.options)
-        layout.addWidget(self.target)
-        layout.addWidget(self.safety)
+        layout.addLayout(columns, 1)
         layout.addLayout(status_row)
         layout.addWidget(self.start_button)
         self.setCentralWidget(central)
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(880)
+        self.resize(940, 620)
 
         self._build_menus()
         self._set_status(EngineState.IDLE)
@@ -161,9 +184,13 @@ class MainWindow(QMainWindow):
         self._bridge.toggleRequested.connect(self._toggle)
         self._bridge.panicRequested.connect(self._panic)
         self._bridge.captureRequested.connect(self._capture_position)
+        self._bridge.recordRequested.connect(self._toggle_recording)
+        self._bridge.recordCountChanged.connect(self._on_record_count)
         self._bridge.failsafeTripped.connect(self._on_failsafe)
 
         self.target.pickRequested.connect(self._pick_point)
+        self.target.recordRequested.connect(self._toggle_recording)
+        self.safety.hotkeysRequested.connect(self._edit_hotkeys)
 
         for widget in (self.interval, self.options, self.target):
             widget.changed.connect(self._on_edited)
@@ -265,6 +292,9 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------- control
 
     def _toggle(self) -> None:
+        if self._recording:
+            self.status.setText("Stop the recording first.")
+            return
         if self._engine.is_running:
             self._stop(StopReason.USER)
         else:
@@ -346,9 +376,12 @@ class MainWindow(QMainWindow):
         self.start_button.setText(
             f"Stop  ({toggle_label})" if running else f"Start  ({toggle_label})"
         )
-        for widget in (self.profiles, self.interval, self.options, self.target, self.safety):
-            widget.setEnabled(not running)
+        for widget in (self.profiles, self.interval, self.options, self.safety):
+            widget.setEnabled(not running and not self._recording)
+        self.target.setEnabled(not running)
+        self.start_button.setEnabled(not self._recording)
         self.target.set_capture_hint(format_hotkey(self._hotkeys.capture))
+        self.target.set_record_hotkey_label(format_hotkey(self._hotkeys.record))
 
     def _set_status(self, state: EngineState) -> None:
         if state is EngineState.RUNNING:
@@ -395,6 +428,56 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    # ------------------------------------------------------------ recording
+
+    def _toggle_recording(self) -> None:
+        if self._engine.is_running:
+            self.status.setText("Stop the clicker before recording.")
+            return
+        if self._recording:
+            self._finish_recording()
+        else:
+            self._begin_recording()
+
+    def _begin_recording(self) -> None:
+        # Recorded points land in the sequence, so put the user in front of it.
+        self.target.sequence.setChecked(True)
+        if not self._recorder.start():
+            self._on_warning(
+                "Could not listen for clicks. On macOS this needs Input Monitoring "
+                "permission for whichever app is hosting this process."
+            )
+            return
+        self._recording = True
+        self.target.editor.set_recording(True, 0)
+        self._refresh_labels()
+        self.status.setText(
+            f"Recording — press {format_hotkey(self._hotkeys.record)} to stop"
+        )
+
+    def _finish_recording(self) -> None:
+        events = self._recorder.stop()
+        self._recording = False
+        points = points_from_events(events, keep_timing=self.target.editor.keep_timing())
+        self.target.editor.set_recording(False)
+        self.target.editor.append_points(points)
+        self._refresh_labels()
+        self.status.setText(
+            f"Recorded {len(points)} point{'' if len(points) == 1 else 's'} "
+            f"from {len(events)} click{'' if len(events) == 1 else 's'}"
+        )
+
+    def _on_record_count(self, count: int) -> None:
+        if self._recording:
+            self.target.editor.set_recording(True, count)
+
+    def _is_over_this_window(self, x: int, y: int) -> bool:
+        """Ignore clicks aimed at the autoclicker itself while recording.
+
+        Otherwise the click that presses Stop becomes the last recorded point.
+        """
+        return self.frameGeometry().contains(x, y)
+
     # -------------------------------------------------------------- hotkeys
 
     def _edit_hotkeys(self) -> None:
@@ -410,10 +493,12 @@ class MainWindow(QMainWindow):
             config.toggle: self._bridge.toggleRequested.emit,
             config.panic: self._bridge.panicRequested.emit,
             config.capture: self._bridge.captureRequested.emit,
+            config.record: self._bridge.recordRequested.emit,
         })
         self._hotkey_manager.start()
         self._refresh_labels()
         self.safety.set_panic_label(format_hotkey(config.panic))
+        self.safety.set_hotkey_summary(config)
 
     # ---------------------------------------------------------- permissions
 
@@ -477,6 +562,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._engine.stop()
+        self._recorder.stop()
         self._hotkey_manager.stop()
         if self._failsafe is not None:
             self._failsafe.stop()
@@ -493,7 +579,9 @@ class MainWindow(QMainWindow):
 
 
 class _SafetyWidget(QGroupBox):
-    """Countdown, corner failsafe, and a reminder of the panic key."""
+    """Countdown, corner failsafe, and the way in to the hotkey settings."""
+
+    hotkeysRequested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__("Safety", parent)
@@ -516,10 +604,30 @@ class _SafetyWidget(QGroupBox):
         countdown_row.addWidget(self.countdown)
         countdown_row.addStretch(1)
 
+        # The menu bar carries this too, but on macOS the menu bar lives at the
+        # top of the screen rather than in the window, so it is easy to miss.
+        self.hotkeys_button = QPushButton("Hotkeys…")
+        self.hotkeys_button.clicked.connect(self.hotkeysRequested)
+        self.hotkey_summary = QLabel()
+        self.hotkey_summary.setObjectName("hintLabel")
+        self.hotkey_summary.setWordWrap(True)
+
+        hotkey_row = QHBoxLayout()
+        hotkey_row.addWidget(self.hotkeys_button)
+        hotkey_row.addWidget(self.hotkey_summary, 1)
+
         layout = QVBoxLayout(self)
         layout.addLayout(countdown_row)
         layout.addWidget(self.corner_failsafe)
         layout.addWidget(self.panic_label)
+        layout.addLayout(hotkey_row)
+
+    def set_hotkey_summary(self, config) -> None:
+        self.hotkey_summary.setText(
+            f"{format_hotkey(config.toggle)} start/stop · "
+            f"{format_hotkey(config.capture)} capture · "
+            f"{format_hotkey(config.record)} record"
+        )
 
     def set_panic_label(self, hotkey_label: str) -> None:
         self.panic_label.setText(

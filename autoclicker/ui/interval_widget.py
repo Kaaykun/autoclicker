@@ -136,10 +136,18 @@ def describe_rate(total_ms: float) -> str:
         return "Set an interval of at least 1 ms."
     if total_ms < 1000:
         return f"About {1000 / total_ms:.1f} clicks per second."
+
     seconds = total_ms / 1000
     if seconds < 60:
-        return f"One click every {seconds:g} seconds."
+        return _every(seconds, "second")
     minutes = seconds / 60
     if minutes < 60:
-        return f"One click every {minutes:g} minutes."
-    return f"One click every {minutes / 60:g} hours."
+        return _every(minutes, "minute")
+    return _every(minutes / 60, "hour")
+
+
+def _every(amount: float, unit: str) -> str:
+    """"One click per second", not "One click every 1 seconds"."""
+    if amount == 1:
+        return f"One click per {unit}."
+    return f"One click every {amount:g} {unit}s."

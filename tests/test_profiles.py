@@ -22,8 +22,8 @@ def test_save_and_load_round_trip(tmp_path: Path) -> None:
 
 def test_saving_twice_replaces_rather_than_duplicates(tmp_path: Path) -> None:
     s = store(tmp_path)
-    s.save(Profile(name="Same", interval=IntervalConfig(millis=100)))
-    s.save(Profile(name="Same", interval=IntervalConfig(millis=250)))
+    s.save(Profile(name="Same", interval=IntervalConfig(seconds=0, millis=100)))
+    s.save(Profile(name="Same", interval=IntervalConfig(seconds=0, millis=250)))
     assert s.names() == ["Same"]
     loaded = s.load("Same")
     assert loaded is not None and loaded.interval.total_ms == 250
@@ -92,7 +92,7 @@ def test_a_partial_file_still_loads_with_defaults(tmp_path: Path) -> None:
     loaded = s.load("Sparse")
     assert loaded is not None
     assert loaded.click.button is MouseButton.RIGHT
-    assert loaded.interval.total_ms == 100
+    assert loaded.interval.total_ms == 1000
 
 
 def test_missing_directory_is_not_an_error(tmp_path: Path) -> None:

@@ -10,13 +10,17 @@ hotkeys, randomised jitter, saved profiles, and proper safety controls.
 
 ## Features
 
-- **Interval** in hours / minutes / seconds / milliseconds
+- **Interval** in hours / minutes / seconds / milliseconds (default: 1 second)
 - **Mouse button**: left, right, middle
 - **Click type**: single, double or triple, with a tunable inter-click gap
 - **Repeat** a fixed number of times, or until stopped
 - **Targeting**: follow the cursor, or lock an (X, Y) point picked directly off
   the screen with a crosshair overlay
-- **Click sequences**: an ordered list of points, each with its own delay
+- **Click sequences**: an ordered list of points, each with its own button,
+  click type and delay — shown in seconds or milliseconds, your choice
+- **Record a sequence**: press Record (or `F9`), click your way through a task,
+  press it again. Your clicks, buttons and pauses come back as a sequence you
+  can loop forever
 - **Randomised jitter** on both interval and position, so runs aren't
   machine-perfect
 - **Global hotkeys** for start/stop, panic-stop and position capture, all
@@ -83,8 +87,11 @@ uv run autoclicker --cli --seconds 1 --at 840 500 --jitter-percent 15
 | `F6` | Start / stop |
 | `F7` | Capture the pointer's current position as the target |
 | `F8` | Panic stop — always active while running |
+| `F9` | Start / stop recording a click sequence |
 
-All three are remappable under **Settings → Hotkeys**. The pointer hitting any
+All four are remappable — the **Hotkeys…** button in the Safety panel, or
+**Settings → Hotkeys** in the menu bar (which on macOS lives at the top of the
+screen, not in the window). The pointer hitting any
 screen corner also stops a run, which is the escape hatch when the clicker is
 eating the click you are trying to land on the Stop button.
 
@@ -106,6 +113,20 @@ tell you so and offer to open the right settings pane.
 Nothing special for normal use. One exception: a non-elevated process cannot
 send input to a window running as administrator — to click into an elevated
 app, run the autoclicker as administrator too.
+
+## Recording a sequence
+
+1. Choose **Sequence of points** in the Target panel.
+2. Press **Record…** or `F9`.
+3. Click through whatever you want repeated. Buttons, double-clicks and the
+   pauses between them are all captured; clicks on the autoclicker window
+   itself are ignored.
+4. Press `F9` again to stop. The clicks arrive as points, appended to whatever
+   was already in the list.
+5. Set Repeat to **Until stopped** and press Start to loop it forever.
+
+Untick **Keep recorded timing** to discard your pauses and drive every step
+from the interval instead.
 
 ## Where settings live
 

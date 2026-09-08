@@ -13,6 +13,7 @@ import threading
 
 from .core.backends import FakeBackend, PynputBackend
 from .core.config import (
+    DEFAULT_INTERVAL_SECONDS,
     ClickConfig,
     ClickType,
     IntervalConfig,
@@ -34,10 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     timing = parser.add_argument_group("interval")
-    timing.add_argument("--hours", type=int, default=0)
-    timing.add_argument("--minutes", type=int, default=0)
-    timing.add_argument("--seconds", type=int, default=0)
-    timing.add_argument("--ms", type=int, default=100, help="milliseconds (default: 100)")
+    # All four default to unset rather than 0, so that passing one of them does
+    # not silently add the 1-second default on top: --ms 250 means 250 ms.
+    timing.add_argument("--hours", type=int)
+    timing.add_argument("--minutes", type=int)
+    timing.add_argument("--seconds", type=int)
+    timing.add_argument("--ms", type=int,
+                        help="milliseconds (the interval defaults to 1 second)")
     jitter = timing.add_mutually_exclusive_group()
     jitter.add_argument("--jitter-percent", type=float, metavar="PCT")
     jitter.add_argument("--jitter-ms", type=float, metavar="MS")
@@ -86,13 +90,26 @@ def profile_from_args(args: argparse.Namespace) -> Profile:
             position_jitter_px=args.pos_jitter,
         )
 
+    components = {
+        name: value
+        for name, value in (
+            ("hours", args.hours),
+            ("minutes", args.minutes),
+            ("seconds", args.seconds),
+            ("millis", args.ms),
+        )
+        if value is not None
+    }
+    if not components:
+        components = {"seconds": DEFAULT_INTERVAL_SECONDS}
+
     return Profile(
         name="cli",
         interval=IntervalConfig(
-            hours=args.hours,
-            minutes=args.minutes,
-            seconds=args.seconds,
-            millis=args.ms,
+            hours=components.get("hours", 0),
+            minutes=components.get("minutes", 0),
+            seconds=components.get("seconds", 0),
+            millis=components.get("millis", 0),
             jitter_mode=jitter_mode,
             jitter_amount=jitter_amount,
         ),

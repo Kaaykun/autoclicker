@@ -1,0 +1,64 @@
+"""Duration text the sequence table has to survive."""
+
+from __future__ import annotations
+
+import pytest
+
+from autoclicker.core.units import format_duration, parse_duration
+
+
+@pytest.mark.parametrize(
+    ("text", "default_unit", "expected_ms"),
+    [
+        ("1", "s", 1000.0),
+        ("1", "ms", 1.0),
+        ("0.5", "s", 500.0),
+        ("1.5s", "ms", 1500.0),
+        ("250 ms", "s", 250.0),
+        ("250ms", "s", 250.0),
+        ("2 sec", "ms", 2000.0),
+        ("2 seconds", "ms", 2000.0),
+        ("1 min", "s", 60_000.0),
+        ("  3  ", "s", 3000.0),
+        ("1,5", "s", 1500.0),
+        ("0", "s", 0.0),
+    ],
+)
+def test_parsing(text: str, default_unit: str, expected_ms: float) -> None:
+    assert parse_duration(text, default_unit) == expected_ms
+
+
+def test_a_written_unit_beats_the_column_unit() -> None:
+    """Typing "250 ms" into a seconds column means 250 ms, not 250 seconds."""
+    assert parse_duration("250 ms", "s") == 250.0
+    assert parse_duration("2 s", "ms") == 2000.0
+
+
+@pytest.mark.parametrize("text", ["", "soon", "1 fortnight", "abc", "1.2.3", "--5"])
+def test_nonsense_is_rejected_rather_than_guessed(text: str) -> None:
+    assert parse_duration(text) is None
+
+
+def test_ms_is_never_read_as_minutes() -> None:
+    assert parse_duration("5 ms", "s") == 5.0
+    assert parse_duration("5 m", "s") == 300_000.0
+
+
+@pytest.mark.parametrize(
+    ("millis", "unit", "expected"),
+    [
+        (1000.0, "s", "1 s"),
+        (1500.0, "s", "1.5 s"),
+        (250.0, "ms", "250 ms"),
+        (0.0, "s", "0 s"),
+        (250.0, "s", "0.25 s"),
+    ],
+)
+def test_formatting_has_no_trailing_zero_noise(millis: float, unit: str, expected: str) -> None:
+    assert format_duration(millis, unit) == expected
+
+
+def test_formatting_and_parsing_round_trip() -> None:
+    for millis in (0.0, 1.0, 250.0, 1000.0, 1500.0, 60_000.0):
+        for unit in ("s", "ms"):
+            assert parse_duration(format_duration(millis, unit), unit) == millis

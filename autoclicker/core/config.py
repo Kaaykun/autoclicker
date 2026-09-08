@@ -17,6 +17,8 @@ SCHEMA_VERSION = 1
 MIN_INTERVAL_MS = 1.0
 #: Below this the OS event pipeline, not Python, is the limiting factor.
 FAST_INTERVAL_WARNING_MS = 10.0
+#: A fresh, unconfigured autoclicker clicks once a second.
+DEFAULT_INTERVAL_SECONDS = 1
 
 
 class MouseButton(str, Enum):
@@ -70,8 +72,8 @@ class IntervalConfig:
 
     hours: int = 0
     minutes: int = 0
-    seconds: int = 0
-    millis: int = 100
+    seconds: int = DEFAULT_INTERVAL_SECONDS
+    millis: int = 0
     jitter_mode: JitterMode = JitterMode.OFF
     #: Percent (0-100) when mode is PERCENT, milliseconds when mode is MILLIS.
     jitter_amount: float = 0.0
@@ -111,11 +113,21 @@ class IntervalConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IntervalConfig:
+        """Rebuild from JSON.
+
+        The components are all-or-nothing: if the data names *any* of them, the
+        rest are zero. Falling back to the 1-second default per-field would mean
+        ``{"millis": 250}`` quietly loading as 1.25 seconds.
+        """
+        fields = ("hours", "minutes", "seconds", "millis")
+        present = {name: int(data[name]) for name in fields if name in data}
+        if not present:
+            present = {"seconds": DEFAULT_INTERVAL_SECONDS}
         return cls(
-            hours=int(data.get("hours", 0)),
-            minutes=int(data.get("minutes", 0)),
-            seconds=int(data.get("seconds", 0)),
-            millis=int(data.get("millis", 100)),
+            hours=present.get("hours", 0),
+            minutes=present.get("minutes", 0),
+            seconds=present.get("seconds", 0),
+            millis=present.get("millis", 0),
             jitter_mode=_enum(JitterMode, data.get("jitter_mode"), JitterMode.OFF),
             jitter_amount=float(data.get("jitter_amount", 0.0)),
         )
@@ -307,9 +319,15 @@ class HotkeyConfig:
     toggle: str = "<f6>"
     panic: str = "<f8>"
     capture: str = "<f7>"
+    record: str = "<f9>"
 
     def validate(self) -> list[str]:
-        bindings = {"start/stop": self.toggle, "panic": self.panic, "capture": self.capture}
+        bindings = {
+            "start/stop": self.toggle,
+            "panic": self.panic,
+            "capture": self.capture,
+            "record": self.record,
+        }
         problems = [f"The {name} hotkey is empty." for name, key in bindings.items() if not key]
         assigned = [key for key in bindings.values() if key]
         if len(set(assigned)) != len(assigned):
@@ -317,7 +335,12 @@ class HotkeyConfig:
         return problems
 
     def to_dict(self) -> dict[str, Any]:
-        return {"toggle": self.toggle, "panic": self.panic, "capture": self.capture}
+        return {
+            "toggle": self.toggle,
+            "panic": self.panic,
+            "capture": self.capture,
+            "record": self.record,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HotkeyConfig:
@@ -325,6 +348,7 @@ class HotkeyConfig:
             toggle=str(data.get("toggle", "<f6>")),
             panic=str(data.get("panic", "<f8>")),
             capture=str(data.get("capture", "<f7>")),
+            record=str(data.get("record", "<f9>")),
         )
 
 

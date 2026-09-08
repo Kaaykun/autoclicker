@@ -28,6 +28,7 @@ beyond module stubs.
 |---|---|---|
 | E1 | **Randomised jitter** — ±% or ±ms on the interval, ±N px on the position | Machine-perfect timing is both detectable and unrealistic; jitter makes runs look human |
 | E2 | **Profiles + click sequences** — named JSON configs; optional ordered list of points (A → wait → B → wait → C, looped) | Reuse setups; automate multi-point workflows |
+| E4 | **Recording** — capture real clicks (position, button, double-clicks and the pauses between them) into a replayable sequence | Added after first use. Building a sequence by hand is tedious; performing it once is not |
 | E3 | **Safety: panic hotkey + corner failsafe + start countdown** | A runaway clicker that steals every click is genuinely hard to stop; this is the single most important feature in the app |
 
 ### Deferred (nice-to-have, tracked as later milestones)

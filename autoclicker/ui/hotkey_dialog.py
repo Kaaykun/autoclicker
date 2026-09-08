@@ -37,6 +37,7 @@ class HotkeyDialog(QDialog):
         ("toggle", "Start / stop"),
         ("panic", "Panic stop"),
         ("capture", "Capture pointer position"),
+        ("record", "Record a click sequence"),
     )
 
     def __init__(self, config: HotkeyConfig, parent=None) -> None:

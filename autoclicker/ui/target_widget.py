@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
 )
@@ -25,6 +26,7 @@ COORD_LIMIT = 100_000
 class TargetWidget(QGroupBox):
     changed = Signal()
     pickRequested = Signal()
+    recordRequested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__("Target", parent)
@@ -52,6 +54,7 @@ class TargetWidget(QGroupBox):
 
         self.editor = SequenceEditor()
         self.editor.addPointRequested.connect(self.pickRequested)
+        self.editor.recordToggleRequested.connect(self.recordRequested)
         self.editor.changed.connect(self.changed)
         self.editor.hide()
 
@@ -80,6 +83,9 @@ class TargetWidget(QGroupBox):
         layout.addWidget(self.editor)
         layout.addWidget(self.capture_hint)
         layout.addLayout(jitter_row)
+        layout.addStretch(1)
+
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
         self._sync_enabled()
 
@@ -109,6 +115,9 @@ class TargetWidget(QGroupBox):
         self.y.blockSignals(False)
         self.fixed_point.setChecked(True)
         self.changed.emit()
+
+    def set_record_hotkey_label(self, label: str) -> None:
+        self.editor.set_record_hotkey_label(label)
 
     def set_capture_hint(self, hotkey_label: str) -> None:
         self.capture_hint.setText(

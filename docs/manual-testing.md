@@ -17,11 +17,24 @@ Things CI can't verify. Run before tagging a release.
 - [ ] Capture-position hotkey grabs the pointer without the overlay
 - [ ] Follow-cursor mode tracks the pointer while running
 
+## Sequences and recording
+- [ ] Record captures clicks in order, with the right buttons
+- [ ] A real double-click comes back as one Double point, not two Singles
+- [ ] Clicking the autoclicker's own window during a recording is ignored
+- [ ] Recorded pauses replay at roughly the speed they were performed
+- [ ] "Keep recorded timing" off makes every step use the interval
+- [ ] A recorded sequence loops cleanly on "Until stopped"
+- [ ] The wait column switches between seconds and milliseconds without
+      changing the underlying values
+- [ ] Typing "250 ms" into a seconds column is read as 250 ms
+
 ## Hotkeys
 - [ ] Start/stop toggle works while another app is focused
 - [ ] Panic hotkey stops a 1 ms click storm immediately
 - [ ] Corner failsafe aborts the run
 - [ ] Remapped hotkey persists across a restart
+- [ ] The record hotkey starts and stops a recording
+- [ ] The Hotkeys… button in the Safety panel opens the same dialog as the menu
 
 ## Platform
 - [ ] macOS: permission dialog appears when Accessibility is not granted

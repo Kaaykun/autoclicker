@@ -31,11 +31,14 @@ QGroupBox::title {
     left: 10px;
     padding: 0 4px;
 }
+/* Font properties only. The moment a stylesheet sets padding, a border or a
+   background on a QPushButton, Qt stops drawing it natively and falls back to
+   the stylesheet box model -- which on macOS means the button loses its
+   chrome entirely and reads as plain text. Size comes from setMinimumHeight
+   in the widget instead. */
 QPushButton#primaryButton {
     font-size: 15px;
     font-weight: 600;
-    padding: 10px 18px;
-    border-radius: 6px;
 }
 QLabel#statusLabel {
     font-size: 13px;

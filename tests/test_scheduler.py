@@ -39,13 +39,15 @@ def make_scheduler(clock: FakeClock, overshoot: float = 0.0) -> DeadlineSchedule
 
 
 def test_jitter_off_returns_the_exact_interval() -> None:
-    interval = IntervalConfig(millis=250)
+    interval = IntervalConfig(seconds=0, millis=250)
     rng = random.Random(0)
     assert jittered_interval_ms(interval, rng) == 250.0
 
 
 def test_percentage_jitter_stays_inside_its_band() -> None:
-    interval = IntervalConfig(millis=100, jitter_mode=JitterMode.PERCENT, jitter_amount=20)
+    interval = IntervalConfig(
+        seconds=0, millis=100, jitter_mode=JitterMode.PERCENT, jitter_amount=20
+    )
     rng = random.Random(1234)
     samples = [jittered_interval_ms(interval, rng) for _ in range(2000)]
     assert all(80.0 <= s <= 120.0 for s in samples)
@@ -54,7 +56,9 @@ def test_percentage_jitter_stays_inside_its_band() -> None:
 
 
 def test_millisecond_jitter_stays_inside_its_band() -> None:
-    interval = IntervalConfig(millis=100, jitter_mode=JitterMode.MILLIS, jitter_amount=30)
+    interval = IntervalConfig(
+        seconds=0, millis=100, jitter_mode=JitterMode.MILLIS, jitter_amount=30
+    )
     rng = random.Random(99)
     samples = [jittered_interval_ms(interval, rng) for _ in range(2000)]
     assert all(70.0 <= s <= 130.0 for s in samples)
@@ -62,7 +66,9 @@ def test_millisecond_jitter_stays_inside_its_band() -> None:
 
 def test_jitter_can_never_drive_the_interval_below_the_floor() -> None:
     """A 200% jitter on a 5 ms interval would otherwise go negative."""
-    interval = IntervalConfig(millis=5, jitter_mode=JitterMode.PERCENT, jitter_amount=100)
+    interval = IntervalConfig(
+        seconds=0, millis=5, jitter_mode=JitterMode.PERCENT, jitter_amount=100
+    )
     rng = random.Random(7)
     samples = [jittered_interval_ms(interval, rng) for _ in range(2000)]
     assert min(samples) >= MIN_INTERVAL_MS

@@ -68,7 +68,7 @@ def test_interval_widget_round_trips(qt_app) -> None:
     from autoclicker.ui.interval_widget import IntervalWidget
 
     widget = IntervalWidget()
-    assert widget.value().total_ms == 100
+    assert widget.value().total_ms == 1000
 
     config = IntervalConfig(
         hours=1, minutes=2, seconds=3, millis=4,
@@ -84,7 +84,7 @@ def test_interval_widget_warns_only_when_very_fast(qt_app) -> None:
 
     widget = IntervalWidget()
     assert not widget.warning.isVisible()
-    widget.set_value(IntervalConfig(millis=2))
+    widget.set_value(IntervalConfig(seconds=0, millis=2))
     assert widget.warning.text()
 
 
@@ -193,9 +193,11 @@ def test_a_broken_position_provider_does_not_crash_the_overlay(qt_app) -> None:
     ("total_ms", "fragment"),
     [
         (100, "10.0 clicks per second"),
-        (1000, "every 1 seconds"),
+        (1000, "per second"),
         (90_000, "every 1.5 minutes"),
         (7_200_000, "every 2 hours"),
+        (60_000, "per minute"),
+        (3_600_000, "per hour"),
         (0, "at least 1 ms"),
     ],
 )
@@ -284,13 +286,15 @@ def test_a_sequence_round_trips_through_the_target_widget(qt_app) -> None:
 # ------------------------------------------------------------------ profiles
 
 
-def _window(tmp_path):
+def _window(tmp_path, recorder=None):
+    """A window with a throwaway config directory, never the user's real one."""
     from autoclicker.core.profiles import ProfileStore, Settings
     from autoclicker.ui.main_window import MainWindow
 
     return MainWindow(
         store=ProfileStore(tmp_path / "profiles"),
         settings=Settings(tmp_path),
+        recorder=recorder,
     )
 
 
@@ -301,7 +305,7 @@ def test_a_profile_saved_from_the_window_reloads_into_it(qt_app, tmp_path) -> No
         window._store.save(window._profile("Slow"))
         window._refresh_profiles("Slow")
 
-        window.interval.set_value(IntervalConfig(millis=50))
+        window.interval.set_value(IntervalConfig(seconds=0, millis=50))
         assert window.interval.value().total_ms == 50
 
         window._load_profile("Slow")
@@ -352,7 +356,7 @@ def test_the_last_profile_is_restored_on_the_next_launch(qt_app, tmp_path) -> No
     settings = Settings(tmp_path)
 
     first = _window(tmp_path)
-    first.interval.set_value(IntervalConfig(minutes=5, millis=0))
+    first.interval.set_value(IntervalConfig(minutes=5, seconds=0, millis=0))
     store.save(first._profile("Restored"))
     first._refresh_profiles("Restored")
     first.close()
@@ -365,3 +369,213 @@ def test_the_last_profile_is_restored_on_the_next_launch(qt_app, tmp_path) -> No
         assert second.interval.value().total_ms == 300_000
     finally:
         second.close()
+
+
+# ------------------------------------------------------------- new defaults
+
+
+def test_the_window_opens_at_one_click_per_second(qt_app) -> None:
+    from autoclicker.ui.interval_widget import IntervalWidget
+
+    widget = IntervalWidget()
+    value = widget.value()
+    assert (value.hours, value.minutes, value.seconds, value.millis) == (0, 0, 1, 0)
+    assert not widget.warning.isVisible()
+
+
+# ----------------------------------------------------------- sequence units
+
+
+def test_the_wait_column_follows_the_chosen_unit(qt_app) -> None:
+    from autoclicker.core.config import SequencePoint
+    from autoclicker.core.units import MILLISECONDS, SECONDS
+    from autoclicker.ui.sequence_widget import SequenceEditor
+
+    editor = SequenceEditor()
+    editor.set_points([SequencePoint(x=1, y=1, delay_after_ms=1500)])
+
+    assert editor.unit.currentData() == SECONDS, "seconds is the sensible default"
+    assert editor.table.item(0, 4).text() == "1.5 s"
+
+    editor.unit.setCurrentIndex(editor.unit.findData(MILLISECONDS))
+    assert editor.table.item(0, 4).text() == "1500 ms"
+    assert editor.points()[0].delay_after_ms == 1500, "switching units must not edit data"
+
+
+def test_a_wait_typed_without_a_unit_uses_the_column_unit(qt_app) -> None:
+    from autoclicker.ui.sequence_widget import SequenceEditor
+
+    editor = SequenceEditor()
+    editor.add_point(1, 1)
+    editor.table.item(0, 4).setText("2")
+    assert editor.points()[0].delay_after_ms == 2000.0
+
+
+def test_a_wait_typed_with_a_unit_overrides_the_column(qt_app) -> None:
+    from autoclicker.ui.sequence_widget import SequenceEditor
+
+    editor = SequenceEditor()
+    editor.add_point(1, 1)
+    editor.table.item(0, 4).setText("250 ms")
+    assert editor.points()[0].delay_after_ms == 250.0
+
+
+def test_an_unparseable_wait_keeps_the_previous_value(qt_app) -> None:
+    from autoclicker.ui.sequence_widget import SequenceEditor
+
+    editor = SequenceEditor()
+    editor.add_point(1, 1)
+    editor.table.item(0, 4).setText("3")
+    editor.table.item(0, 4).setText("whenever")
+    assert editor.points()[0].delay_after_ms == 3000.0
+
+
+# ------------------------------------------------------------------ recording
+
+
+class StubRecorder:
+    """Stands in for pynput so these tests do not depend on input permissions."""
+
+    def __init__(self, events=None, can_start=True) -> None:
+        self._events = events or []
+        self._can_start = can_start
+        self.is_recording = False
+
+    def start(self) -> bool:
+        self.is_recording = self._can_start
+        return self._can_start
+
+    def stop(self):
+        self.is_recording = False
+        return self._events
+
+
+def test_recording_puts_you_in_sequence_mode_and_shows_progress(qt_app, tmp_path) -> None:
+    window = _window(tmp_path, StubRecorder())
+    try:
+        window._toggle_recording()
+        assert window._recording
+        assert window.target.value().mode is TargetMode.SEQUENCE
+        assert "Stop recording" in window.target.editor.record_button.text()
+
+        window._bridge.recordCountChanged.emit(3)
+        assert "3 clicks" in window.target.editor.record_button.text()
+    finally:
+        window.close()
+
+
+def test_a_recording_becomes_sequence_points(qt_app, tmp_path) -> None:
+    from autoclicker.core.config import MouseButton as Button
+    from autoclicker.core.recorder import ClickEvent
+
+    events = [
+        ClickEvent(100, 100, Button.LEFT, 0.0),
+        ClickEvent(100, 100, Button.LEFT, 0.12),   # a double-click
+        ClickEvent(400, 300, Button.RIGHT, 2.0),
+    ]
+    window = _window(tmp_path, StubRecorder(events))
+    try:
+        window._toggle_recording()
+        window._toggle_recording()
+
+        points = window.target.value().sequence
+        assert [(p.x, p.y) for p in points] == [(100, 100), (400, 300)]
+        assert points[0].click_type is ClickType.DOUBLE
+        assert points[1].button is Button.RIGHT
+        assert not window._recording
+        assert "Recorded 2 points" in window.status.text()
+    finally:
+        window.close()
+
+
+def test_a_recording_appends_rather_than_wiping_existing_points(qt_app, tmp_path) -> None:
+    from autoclicker.core.config import MouseButton as Button
+    from autoclicker.core.recorder import ClickEvent
+
+    window = _window(tmp_path, StubRecorder([ClickEvent(9, 9, Button.LEFT, 0.0)]))
+    try:
+        window.target.sequence.setChecked(True)
+        window.target.editor.add_point(1, 1)
+        window._toggle_recording()
+        window._toggle_recording()
+        assert [(p.x, p.y) for p in window.target.value().sequence] == [(1, 1), (9, 9)]
+    finally:
+        window.close()
+
+
+def test_dropping_recorded_timing_leaves_the_interval_in_charge(qt_app, tmp_path) -> None:
+    from autoclicker.core.config import MouseButton as Button
+    from autoclicker.core.recorder import ClickEvent
+
+    events = [ClickEvent(0, 0, Button.LEFT, 0.0), ClickEvent(500, 0, Button.LEFT, 4.0)]
+    window = _window(tmp_path, StubRecorder(events))
+    try:
+        window.target.editor.keep_timing_box.setChecked(False)
+        window._toggle_recording()
+        window._toggle_recording()
+        assert [p.delay_after_ms for p in window.target.value().sequence] == [0.0, 0.0]
+    finally:
+        window.close()
+
+
+def test_a_recorder_that_cannot_listen_says_so_instead_of_pretending(qt_app, tmp_path) -> None:
+    window = _window(tmp_path, StubRecorder(can_start=False))
+    try:
+        window._toggle_recording()
+        assert not window._recording
+        assert "Input Monitoring" in window.notice.text()
+    finally:
+        window.close()
+
+
+def test_clicks_on_the_autoclicker_itself_are_ignored_while_recording(qt_app, tmp_path) -> None:
+    """Otherwise the click that presses Stop becomes the last recorded point."""
+    window = _window(tmp_path, StubRecorder())
+    try:
+        window.setGeometry(100, 100, 400, 300)
+        inside = window.frameGeometry().center()
+        assert window._is_over_this_window(inside.x(), inside.y())
+        assert not window._is_over_this_window(5000, 5000)
+    finally:
+        window.close()
+
+
+def test_starting_the_clicker_is_blocked_while_recording(qt_app, tmp_path) -> None:
+    window = _window(tmp_path, StubRecorder())
+    try:
+        window._toggle_recording()
+        window._toggle()
+        assert not window._engine.is_running
+        assert not window.start_button.isEnabled()
+    finally:
+        window.close()
+
+
+# -------------------------------------------------------------- discoverable
+
+
+def test_the_hotkeys_are_reachable_without_the_menu_bar(qt_app, tmp_path) -> None:
+    """On macOS the menu bar is at the top of the screen, not in the window."""
+    window = _window(tmp_path)
+    try:
+        assert window.safety.hotkeys_button.text() == "Hotkeys…"
+        summary = window.safety.hotkey_summary.text()
+        assert "F6" in summary and "F7" in summary and "F9" in summary
+
+        # Detach the window's own slot first: it opens a modal dialog, which
+        # would hang a headless run.
+        window.safety.hotkeysRequested.disconnect()
+        seen: list[bool] = []
+        window.safety.hotkeysRequested.connect(lambda: seen.append(True))
+        window.safety.hotkeys_button.click()
+        assert seen
+    finally:
+        window.close()
+
+
+def test_the_record_hotkey_is_part_of_the_config_and_conflict_checked() -> None:
+    from autoclicker.core.config import HotkeyConfig
+
+    assert HotkeyConfig().record == "<f9>"
+    assert HotkeyConfig().validate() == []
+    assert HotkeyConfig(record="<f6>").validate()
