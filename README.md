@@ -4,9 +4,9 @@ A cross-platform (macOS + Windows) auto-clicker with a PySide6 GUI: precise
 intervals down to the millisecond, fixed or follow-cursor targeting, global
 hotkeys, randomised jitter, saved profiles, and proper safety controls.
 
-> **Status:** early development. See [PLAN.md](PLAN.md) for the full design and
-> milestones. The package currently contains module stubs — M1 is the first
-> working engine.
+> **Status:** working. The engine, GUI, hotkeys, safety controls and the
+> coordinate picker are in (milestones M1–M4). Saved profiles and click
+> sequences are next — see [PLAN.md](PLAN.md) for the full design and roadmap.
 
 ## Features
 
@@ -42,8 +42,29 @@ pip install -e ".[dev]"
 ## Run
 
 ```bash
-python -m autoclicker
+python -m autoclicker          # the window
+python -m autoclicker --cli    # headless, for scripting
 ```
+
+Headless mode takes the same settings as flags, and `--dry-run` reports what it
+would click without touching the pointer:
+
+```bash
+python -m autoclicker --cli --ms 250 -n 20 --button right --dry-run
+python -m autoclicker --cli --seconds 1 --at 840 500 --jitter-percent 15
+```
+
+### Default hotkeys
+
+| Key | Does |
+|---|---|
+| `F6` | Start / stop |
+| `F7` | Capture the pointer's current position as the target |
+| `F8` | Panic stop — always active while running |
+
+All three are remappable under **Settings → Hotkeys**. The pointer hitting any
+screen corner also stops a run, which is the escape hatch when the clicker is
+eating the click you are trying to land on the Stop button.
 
 ## Permissions
 
