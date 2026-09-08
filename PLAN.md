@@ -48,6 +48,7 @@ scheduled start.
 | Config | stdlib `json` + `dataclasses` | Human-readable, diffable, no dependency |
 | Tests | pytest | Pure-logic only; the click backend is injectable so CI never fires a real click |
 | Lint/format | ruff | One tool, fast |
+| Dependencies | **uv** | Lockfile committed, so every machine and CI resolve identically. `uv sync` also fetches the pinned Python, so a clone needs nothing preinstalled but uv itself |
 | Packaging (later) | PyInstaller | `.app` on macOS, `.exe` on Windows, built by a GitHub Actions matrix on tag |
 
 Runtime dependencies stay deliberately small: `PySide6`, `pynput`. That's it.

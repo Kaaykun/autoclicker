@@ -15,8 +15,14 @@ dependencies = [
     "pynput>=1.7.6",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+# Dev tooling goes in a dependency group (PEP 735), not an optional-dependency
+# extra: it is not something a consumer of this package would ever install, and
+# `uv sync` picks up the dev group by default.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
 
 [project.scripts]
 autoclicker = "autoclicker.__main__:main"

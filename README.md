@@ -26,32 +26,54 @@ hotkeys, randomised jitter, saved profiles, and proper safety controls.
 
 ## Requirements
 
-- Python 3.10 or newer
-- macOS 12+ or Windows 10+
+- Python 3.10 or newer (the repo pins 3.12 in `.python-version`)
+- macOS 13+ or Windows 10+ (PySide6 6.11 ships macOS wheels built for 13 and newer)
 
-## Install (development)
+## Install
+
+This project is managed with [uv](https://docs.astral.sh/uv/). One command
+creates the virtualenv, fetches the right Python if you do not have it, and
+installs the locked dependency set:
 
 ```bash
-git clone git@github.com:<your-account>/autoclicker.git
+git clone git@github.com:Kaaykun/autoclicker.git
 cd autoclicker
+uv sync
+```
+
+`uv.lock` is committed, so everyone — and CI — gets byte-identical
+dependencies. After changing anything in `pyproject.toml`, run `uv lock` and
+commit the result; CI syncs with `--locked` and will fail if the two disagree.
+
+<details>
+<summary>Without uv</summary>
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e . -r requirements-dev.txt
 ```
+
+You lose the lockfile guarantee, but nothing else.
+</details>
 
 ## Run
 
 ```bash
-python -m autoclicker          # the window
-python -m autoclicker --cli    # headless, for scripting
+uv run autoclicker                    # the window
+uv run autoclicker --cli              # headless, for scripting
 ```
+
+`uv run` syncs first, so it is always working against the locked dependencies —
+no activating anything. If you would rather activate the venv, `python -m
+autoclicker` does the same thing.
 
 Headless mode takes the same settings as flags, and `--dry-run` reports what it
 would click without touching the pointer:
 
 ```bash
-python -m autoclicker --cli --ms 250 -n 20 --button right --dry-run
-python -m autoclicker --cli --seconds 1 --at 840 500 --jitter-percent 15
+uv run autoclicker --cli --ms 250 -n 20 --button right --dry-run
+uv run autoclicker --cli --seconds 1 --at 840 500 --jitter-percent 15
 ```
 
 ### Default hotkeys
@@ -98,9 +120,18 @@ corrupt one costs you that profile rather than the app.
 ## Development
 
 ```bash
-ruff check .
-pytest
+uv run ruff check .
+uv run pytest
 ```
+
+Adding a dependency:
+
+```bash
+uv add somepackage           # runtime
+uv add --dev somepackage     # tooling
+```
+
+Both update `pyproject.toml` and `uv.lock` together. Commit both.
 
 The `core/` package holds no Qt imports and is fully testable headless; the
 click backend is injectable, so the test suite never fires a real click.
