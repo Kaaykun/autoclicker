@@ -5,7 +5,7 @@ intervals down to the millisecond, fixed or follow-cursor targeting, global
 hotkeys, randomised jitter, saved profiles, and proper safety controls.
 
 > **Status:** feature-complete for daily use (milestones M0–M6). Packaged
-> `.app` / `.exe` builds are still to come — see [PLAN.md](PLAN.md) for the
+> `.app` / `.exe` builds are still to come — see [docs/PLAN.md](docs/PLAN.md) for the
 > roadmap.
 
 ## Features
