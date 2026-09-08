@@ -284,7 +284,7 @@ class TargetConfig:
 class SafetyConfig:
     """The controls that make a runaway clicker stoppable."""
 
-    countdown_seconds: float = 3.0
+    countdown_seconds: float = 0.0
     corner_failsafe: bool = True
     corner_margin_px: int = 10
 
@@ -306,7 +306,7 @@ class SafetyConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SafetyConfig:
         return cls(
-            countdown_seconds=float(data.get("countdown_seconds", 3.0)),
+            countdown_seconds=float(data.get("countdown_seconds", 0.0)),
             corner_failsafe=bool(data.get("corner_failsafe", True)),
             corner_margin_px=int(data.get("corner_margin_px", 10)),
         )
@@ -383,8 +383,15 @@ class Profile:
                 f"Below {FAST_INTERVAL_WARNING_MS:g} ms the operating system, not this app, "
                 "sets the real click rate -- the achieved rate may be lower than requested."
             )
-        if self.repeat.until_stopped and self.safety.countdown_seconds == 0:
-            notes.append("No countdown and no click limit: make sure you know your panic key.")
+        if (
+            self.repeat.until_stopped
+            and self.safety.countdown_seconds == 0
+            and not self.safety.corner_failsafe
+        ):
+            notes.append(
+                "No countdown, no click limit and no corner failsafe: the panic key is "
+                "the only way to stop this."
+            )
         return notes
 
     def to_dict(self) -> dict[str, Any]:

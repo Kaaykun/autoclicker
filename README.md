@@ -25,7 +25,7 @@ hotkeys, randomised jitter, saved profiles, and proper safety controls.
   machine-perfect
 - **Global hotkeys** for start/stop, panic-stop and position capture, all
   remappable
-- **Safety**: panic hotkey, corner failsafe, start countdown
+- **Safety**: panic hotkey, corner failsafe, optional start countdown
 - **Profiles** saved as JSON, listed in the window, and restored on launch
 
 ## Requirements
@@ -127,6 +127,23 @@ app, run the autoclicker as administrator too.
 
 Untick **Keep recorded timing** to discard your pauses and drive every step
 from the interval instead.
+
+## Troubleshooting
+
+**Clicks land in the wrong place, or the last point of a sequence looks
+skipped.** Moving the pointer posts an event to the windowing system rather
+than applying it there and then, so a click sent immediately afterwards can be
+built at the *previous* position. In a sequence that shows up as every click
+landing one point behind, which makes the final point look like it never
+happened. The app waits for each move to actually land before clicking. To see
+what your machine does:
+
+```bash
+uv run autoclicker --cli --check-pointer
+```
+
+It nudges the pointer a few times, reports how long each move took to apply,
+and puts it back where it started.
 
 ## Where settings live
 

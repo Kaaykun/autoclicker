@@ -10,8 +10,9 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
+import time
 
-from .core.backends import FakeBackend, PynputBackend
+from .core.backends import FakeBackend, PynputBackend, settle_pointer
 from .core.config import (
     DEFAULT_INTERVAL_SECONDS,
     ClickConfig,
@@ -61,11 +62,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="click a fixed point instead of following the cursor")
     target.add_argument("--pos-jitter", type=int, default=0, metavar="PX")
 
-    parser.add_argument("--countdown", type=float, default=3.0,
-                        help="seconds before the first click (default: 3)")
+    parser.add_argument("--countdown", type=float, default=0.0,
+                        help="seconds before the first click (default: 0)")
     parser.add_argument("--dry-run", action="store_true",
                         help="report what would be clicked without touching the pointer")
     parser.add_argument("-q", "--quiet", action="store_true")
+    parser.add_argument(
+        "--check-pointer",
+        action="store_true",
+        help="measure how long pointer moves take to actually land, then exit",
+    )
     return parser
 
 
@@ -124,8 +130,69 @@ def profile_from_args(args: argparse.Namespace) -> Profile:
     )
 
 
+def check_pointer() -> int:
+    """Report how long the system takes to apply a pointer move.
+
+    Moving the pointer posts an event rather than applying it, so a click sent
+    immediately afterwards can land at the previous position. Everything the
+    app does about that depends on the readback agreeing with what was written,
+    which this checks directly.
+
+    The pointer is put back where it started.
+    """
+    backend = PynputBackend(settle=False)
+    try:
+        origin = backend.position()
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        print(f"error: could not read the pointer position: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Pointer is at X {origin[0]}, Y {origin[1]}. Moving it a few times…\n")
+    targets = [
+        (origin[0] + 60, origin[1]),
+        (origin[0] + 60, origin[1] + 60),
+        (origin[0], origin[1] + 60),
+        origin,
+    ]
+
+    worst = 0.0
+    failures = 0
+    for x, y in targets:
+        backend.move_to(x, y)
+        started = time.perf_counter()
+        landed = settle_pointer((x, y), backend.position, timeout_s=0.25)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        worst = max(worst, elapsed_ms)
+        if landed:
+            print(f"  ({x}, {y})  landed after {elapsed_ms:5.1f} ms")
+        else:
+            failures += 1
+            reported = backend.position()
+            print(f"  ({x}, {y})  NEVER landed — readback says {reported}")
+
+    print()
+    if failures:
+        print(
+            "The readback never agreed with what was written. That is a "
+            "coordinate-space mismatch rather than lag, and clicks at a fixed "
+            "point will land in the wrong place. Worth reporting."
+        )
+        return 1
+    if worst < 1.0:
+        print("Moves apply immediately here. Clicks land where they are aimed.")
+    else:
+        print(
+            f"Moves take up to {worst:.1f} ms to apply. Without waiting for that, a "
+            "click sent straight after a move would land at the previous position — "
+            "which is exactly the bug the post-move settle exists to prevent."
+        )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.check_pointer:
+        return check_pointer()
     profile = profile_from_args(args)
 
     problems = profile.validate()

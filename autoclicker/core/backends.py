@@ -8,11 +8,58 @@ real click ever reaching the desktop.
 
 from __future__ import annotations
 
+import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from .config import MouseButton
+
+logger = logging.getLogger(__name__)
+
+#: How long to wait for the windowing system to actually apply a pointer move
+#: before clicking. See :func:`settle_pointer`.
+MOVE_SETTLE_TIMEOUT_S = 0.03
+MOVE_SETTLE_POLL_S = 0.001
+MOVE_SETTLE_TOLERANCE_PX = 1
+#: If the readback never agrees with what we set, stop paying for the wait.
+MOVE_SETTLE_GIVE_UP_AFTER = 5
+
+
+def settle_pointer(
+    target: tuple[int, int],
+    get_position: Callable[[], tuple[int, int]],
+    *,
+    timeout_s: float = MOVE_SETTLE_TIMEOUT_S,
+    poll_s: float = MOVE_SETTLE_POLL_S,
+    tolerance_px: int = MOVE_SETTLE_TOLERANCE_PX,
+    clock: Callable[[], float] = time.perf_counter,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Block until the pointer really is where we asked it to go.
+
+    Setting the pointer position posts an event; it does not take effect
+    synchronously. pynput builds a click event from the pointer position it
+    reads *at press time*, so clicking straight after a move can put the click
+    at the previous location -- which in a sequence means every click lands one
+    point behind, and the last point of a pass appears to be skipped.
+
+    Returns whether it converged, so a caller can stop paying for the wait on a
+    system where the readback never matches what was written.
+    """
+    x, y = target
+    deadline = clock() + timeout_s
+    while True:
+        try:
+            current_x, current_y = get_position()
+        except Exception:
+            return False
+        if abs(current_x - x) <= tolerance_px and abs(current_y - y) <= tolerance_px:
+            return True
+        if clock() >= deadline:
+            return False
+        sleep(poll_s)
 
 
 class BackendError(RuntimeError):
@@ -95,8 +142,10 @@ class PynputBackend:
     explode.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, settle: bool = True) -> None:
         self._handles: _PynputHandles | None = None
+        self._settle = settle
+        self._settle_failures = 0
 
     def _ensure(self) -> _PynputHandles:
         if self._handles is not None:
@@ -130,6 +179,23 @@ class PynputBackend:
             handles.controller.position = (x, y)  # type: ignore[attr-defined]
         except Exception as exc:  # pragma: no cover - platform dependent
             raise BackendError(f"Could not move the pointer: {exc}") from exc
+
+        if not self._settle:
+            return
+        if settle_pointer((x, y), self.position):
+            self._settle_failures = 0
+            return
+
+        self._settle_failures += 1
+        if self._settle_failures >= MOVE_SETTLE_GIVE_UP_AFTER:
+            # The readback disagrees with what we write -- a coordinate-space
+            # mismatch rather than lag. Waiting will never help, so stop
+            # spending 30 ms on every click for it.
+            self._settle = False
+            logger.info(
+                "Pointer position readback never matches what is written; "
+                "skipping the post-move settle from now on."
+            )
 
     def click(
         self,

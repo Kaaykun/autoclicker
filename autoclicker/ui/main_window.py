@@ -589,7 +589,6 @@ class _SafetyWidget(QGroupBox):
         self.countdown = QSpinBox()
         self.countdown.setRange(0, 60)
         self.countdown.setSuffix(" s")
-        self.countdown.setValue(3)
         self.countdown.setToolTip("Time to get the pointer into place before the first click.")
 
         self.corner_failsafe = QCheckBox("Stop when the pointer hits a screen corner")

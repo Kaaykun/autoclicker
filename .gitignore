@@ -11,4 +11,7 @@ venv/
 .mypy_cache/
 .DS_Store
 Thumbs.db
+
+# Where the Claude desktop app drops files it sends into the chat.
+Claude outputs/
 *.spec.bak

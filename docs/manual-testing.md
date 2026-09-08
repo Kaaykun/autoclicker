@@ -6,6 +6,9 @@ Things CI can't verify. Run before tagging a release.
 - [ ] Left / right / middle each register in a target app
 - [ ] Double-click opens a folder / selects a word (the OS accepts the gap)
 - [ ] Fixed repeat count fires exactly N clicks
+- [ ] With the countdown at 0, starting from the button in follow-cursor mode:
+      the first click lands on the Stop button, as expected. Start with the
+      hotkey, or set a countdown, to click somewhere else
 - [ ] "Until stopped" runs for 60 s without drift (compare counter vs wall clock)
 - [ ] 1 ms interval: UI reports the achieved rate honestly, app stays responsive
 
@@ -24,6 +27,9 @@ Things CI can't verify. Run before tagging a release.
 - [ ] Recorded pauses replay at roughly the speed they were performed
 - [ ] "Keep recorded timing" off makes every step use the interval
 - [ ] A recorded sequence loops cleanly on "Until stopped"
+- [ ] Every point of a sequence lands where it should, the last one included
+      (clicks landing one point behind means the post-move settle is not working;
+      `--cli --check-pointer` reports the move latency directly)
 - [ ] The wait column switches between seconds and milliseconds without
       changing the underlying values
 - [ ] Typing "250 ms" into a seconds column is read as 250 ms
