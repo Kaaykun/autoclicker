@@ -1,8 +1,0 @@
-# For pip users. The uv path is `uv sync`, which reads pyproject.toml and
-# uv.lock instead; this file is a convenience mirror of the dev group.
--r requirements.txt
-pytest>=8.0
-ruff>=0.5
-pillow>=10.0
-numpy>=1.26
-pyinstaller>=6.6

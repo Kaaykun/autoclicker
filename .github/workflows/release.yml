@@ -15,10 +15,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # GitHub's macOS runners are Apple Silicon, so this build is too.
+          # Intel Macs should run from source.
           - os: macos-latest
-            artifact: Autoclicker-macos
+            artifact: Autoclicker-macOS-AppleSilicon
           - os: windows-latest
-            artifact: Autoclicker-windows
+            artifact: Autoclicker-Windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -39,11 +41,11 @@ jobs:
       - name: Build app
         run: uv run pyinstaller --noconfirm autoclicker.spec
 
+      # ditto, not zip: it is Apple's own archiver and preserves the
+      # symlinks and bundle metadata inside a .app that a plain zip mangles.
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: |
-          cd dist
-          zip -qry ../${{ matrix.artifact }}.zip Autoclicker.app
+        run: ditto -c -k --sequesterRsrc --keepParent dist/Autoclicker.app ${{ matrix.artifact }}.zip
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -67,15 +69,27 @@ jobs:
           files: "*.zip"
           # These builds are unsigned. Say so where people will actually read it.
           body: |
-            Unsigned builds.
+            ## Install
 
-            **macOS** — the first launch is blocked by Gatekeeper. Right-click
-            `Autoclicker.app` → **Open** → **Open**. Then grant Accessibility
-            and Input Monitoring in System Settings → Privacy & Security, and
-            restart the app. Each new version is a new binary to macOS, so the
-            permissions have to be granted again after an update.
+            **macOS** (Apple Silicon) — download the macOS zip, unzip it, drag
+            `Autoclicker.app` into Applications.
 
-            **Windows** — SmartScreen will warn on first run. **More info** →
-            **Run anyway**. To click into an app running as administrator, run
-            Autoclicker as administrator too.
+            These builds are unsigned, so the first launch is blocked. Double-click
+            the app, let macOS refuse, then open **System Settings → Privacy &
+            Security**, scroll to Security, and click **Open Anyway** next to the
+            message about Autoclicker. The button is only there for about an hour
+            after you tried to open it.
+
+            Then grant it two permissions under the same Privacy & Security
+            settings — **Accessibility** (to send clicks) and **Input Monitoring**
+            (for the hotkeys) — and restart the app.
+
+            macOS ties those permissions to the exact binary, and every unsigned
+            update is a new binary, so you will have to grant them again after each
+            update.
+
+            **Windows** — download the Windows zip, unzip it anywhere, run
+            `Autoclicker.exe`. SmartScreen warns on first run: **More info** →
+            **Run anyway**. No permissions to grant. To click into an app running
+            as administrator, run Autoclicker as administrator too.
           generate_release_notes: true
