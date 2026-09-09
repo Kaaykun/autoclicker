@@ -250,13 +250,27 @@ uv run python tools/make_icons.py     # once, or after changing the artwork
 uv run pyinstaller autoclicker.spec
 ```
 
-Output lands in `dist/`. To publish a release, tag a commit — GitHub Actions
-builds both platforms and attaches them:
+Output lands in `dist/`.
+
+### Cutting a release
+
+The version lives in three places and CI fails the build if they disagree:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+# 1. Bump the version in BOTH pyproject.toml and autoclicker/__init__.py
+# 2. Re-lock, because uv.lock records the project's own version:
+uv lock
+# 3. Check it before pushing — this is what CI does:
+uv lock --check && uv run pytest -q && uv run ruff check .
+# 4. Commit everything including uv.lock, then tag:
+git commit -am "Release vX.Y.Z"
+git push
+git tag vX.Y.Z && git push origin vX.Y.Z
 ```
+
+GitHub Actions then builds both platforms and attaches them to a release.
+Skipping step 2 is the easy mistake: `uv sync --locked` refuses to run and every
+job fails before it reaches the tests.
 
 ### Icons
 
