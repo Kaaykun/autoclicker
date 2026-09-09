@@ -92,6 +92,10 @@ class ClickBackend(Protocol):
         """Press and release a key or chord, in pynput hotkey notation."""
         ...
 
+    def prepare(self) -> None:
+        """Build whatever the backend needs, on the calling thread."""
+        ...
+
 
 @dataclass
 class KeyRecord:
@@ -121,6 +125,7 @@ class FakeBackend:
         self._clock = clock
         self.clicks: list[ClickRecord] = []
         self.keys: list[KeyRecord] = []
+        self.prepared = False
         self.moves: list[tuple[int, int]] = []
 
     def position(self) -> tuple[int, int]:
@@ -141,6 +146,9 @@ class FakeBackend:
 
     def press_key(self, spec: str, hold_ms: float = 0.0) -> None:
         self.keys.append(KeyRecord(self._clock(), spec, hold_ms))
+
+    def prepare(self) -> None:
+        self.prepared = True
 
 
 @dataclass
@@ -268,7 +276,7 @@ class PynputBackend:
         except Exception as exc:
             raise BackendError(f"Could not understand the key “{spec}”: {exc}") from exc
 
-        controller = self._keyboard_controller(keyboard)
+        controller = self._ensure_keyboard(handles)
         pressed: list[object] = []
         try:
             for key in keys:
@@ -288,7 +296,32 @@ class PynputBackend:
                 except Exception:  # pragma: no cover - platform dependent
                     logger.warning("Could not release a held key", exc_info=True)
 
-    def _keyboard_controller(self, keyboard: object):
-        if getattr(self, "_key_controller", None) is None:
+    def prepare(self) -> None:
+        """Construct the OS controllers now, on the calling thread.
+
+        **Call this from the main thread before starting the engine.** pynput's
+        macOS keyboard Controller builds a character-to-keycode map from the
+        current input source inside its constructor
+        (``keyboard/_darwin.py``: ``self._mapping = get_unicode_to_keycode_map()``),
+        and that call is only legal on the main dispatch queue. Constructed
+        lazily on the engine thread it does not raise -- macOS traps the whole
+        process.
+
+        Once built, pressing keys only posts Quartz events using the map it
+        already has, which is safe from any thread.
+        """
+        handles = self._ensure()
+        self._ensure_keyboard(handles)
+
+    def _ensure_keyboard(self, handles: _PynputHandles | None = None):
+        if self._key_controller is not None:
+            return self._key_controller
+        handles = handles or self._ensure()
+        keyboard = handles.keyboard
+        if keyboard is None:  # pragma: no cover - platform dependent
+            raise BackendError("The keyboard backend is unavailable.")
+        try:
             self._key_controller = keyboard.Controller()  # type: ignore[attr-defined]
+        except Exception as exc:  # pragma: no cover - platform dependent
+            raise BackendError(f"Could not open the keyboard: {exc}") from exc
         return self._key_controller

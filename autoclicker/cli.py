@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 
-from .core.backends import FakeBackend, PynputBackend, settle_pointer
+from .core.backends import BackendError, FakeBackend, PynputBackend, settle_pointer
 from .core.config import (
     DEFAULT_INTERVAL_SECONDS,
     ActionType,
@@ -246,6 +246,13 @@ def main(argv: list[str] | None = None) -> int:
             on_error=lambda message: print(f"\nerror: {message}", file=sys.stderr),
         ),
     )
+
+    # Same reason as the GUI: build the OS controllers on the main thread.
+    try:
+        backend.prepare()
+    except BackendError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     print("Ctrl-C to stop." if args.repeat is None else f"Clicking {args.repeat} times.")
     engine.start(profile)

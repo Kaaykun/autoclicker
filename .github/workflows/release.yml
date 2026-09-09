@@ -41,6 +41,28 @@ jobs:
       - name: Build app
         run: uv run pyinstaller --noconfirm autoclicker.spec
 
+      # The unit tests all run against the source tree, where every import
+      # trivially resolves. They cannot see a module PyInstaller failed to
+      # bundle -- which is how a build once shipped with no PySide6 in it at
+      # all. So run the frozen binary itself before uploading it.
+      - name: Smoke-test the built app (macOS)
+        if: runner.os == 'macOS'
+        run: dist/Autoclicker.app/Contents/MacOS/Autoclicker --self-test
+
+      # The Windows build is windowed, so it detaches from the console: the
+      # shell would not wait for it and would never see its output. Hence
+      # Start-Process -Wait and the log file.
+      - name: Smoke-test the built app (Windows)
+        if: runner.os == 'Windows'
+        env:
+          AUTOCLICKER_SELFTEST_LOG: selftest.log
+        run: |
+          $run = Start-Process -FilePath dist/Autoclicker/Autoclicker.exe `
+            -ArgumentList '--self-test' -Wait -PassThru -NoNewWindow
+          if (Test-Path selftest.log) { Get-Content selftest.log }
+          else { Write-Host 'the app wrote no self-test log' }
+          exit $run.ExitCode
+
       # ditto, not zip: it is Apple's own archiver and preserves the
       # symlinks and bundle metadata inside a .app that a plain zip mangles.
       - name: Package (macOS)

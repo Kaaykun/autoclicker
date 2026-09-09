@@ -2,6 +2,11 @@
 
 Things CI can't verify. Run before tagging a release.
 
+CI now covers a little more than it used to: the release job runs the built
+binary with `--self-test`, so "the app launches at all" no longer needs to be
+checked by hand. What is left below is the part that needs a real display, real
+input permissions and a human looking at it.
+
 ## Clicking
 - [ ] Left / right / middle each register in a target app
 - [ ] Double-click opens a folder / selects a word (the OS accepts the gap)
@@ -72,6 +77,8 @@ Things CI can't verify. Run before tagging a release.
       highlight
 - [ ] The packaged app can click and can register hotkeys (this is the one that
       catches a missing pynput backend in the bundle)
+- [ ] `Autoclicker --self-test` exits 0 (the release job runs this too; doing it
+      by hand is only useful when investigating a bad download)
 - [ ] Gatekeeper: right-click → Open works on the first launch
 
 ## Keyboard mode
@@ -83,6 +90,12 @@ Things CI can't verify. Run before tagging a release.
 - [ ] Per-step waits are honoured; 0 falls back to the interval
 - [ ] The counter says "presses", not "clicks"
 - [ ] Switching to keys does not complain about an empty click sequence
+- [ ] **macOS regression:** starting a key run does not kill the app. pynput
+      builds its keycode map from the current input source inside the keyboard
+      controller's constructor, and that call is legal only on the main
+      dispatch queue -- built on the engine thread it traps the process rather
+      than raising. The window calls `backend.prepare()` first to prevent this
+- [ ] The same, after switching the system keyboard layout mid-session
 
 ## Mini mode
 - [ ] The button collapses the window to the status row and Start button

@@ -43,7 +43,7 @@ else:
 # The GUI and CLI are imported inside functions so that a missing PySide6
 # degrades to headless rather than crashing. That deferral also hides them from
 # the analyser, so name them.
-hidden += ["autoclicker.ui.app", "autoclicker.cli"]
+hidden += ["autoclicker.ui.app", "autoclicker.cli", "autoclicker.selftest"]
 
 analysis = Analysis(
     # Not autoclicker/__main__.py: see the comment at the top of the launcher.

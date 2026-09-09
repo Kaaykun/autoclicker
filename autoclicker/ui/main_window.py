@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.backends import PynputBackend
+from ..core.backends import BackendError, ClickBackend, PynputBackend
 from ..core.config import ActionType, HotkeyConfig, Profile, SafetyConfig
 from ..core.engine import ClickEngine, EngineState, StopReason
 from ..core.failsafe import CornerFailsafe
@@ -74,7 +74,8 @@ class MainWindow(QMainWindow):
     def __init__(self, store: ProfileStore | None = None,
                  settings: Settings | None = None,
                  recorder: ClickRecorder | None = None,
-                 hotkey_manager: HotkeyManager | None = None, parent=None) -> None:
+                 hotkey_manager: HotkeyManager | None = None,
+                 backend: ClickBackend | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Autoclicker")
         self.setWindowIcon(app_icon())
@@ -82,7 +83,7 @@ class MainWindow(QMainWindow):
         self._store = store if store is not None else ProfileStore()
         self._settings = settings if settings is not None else Settings()
 
-        self._backend = PynputBackend()
+        self._backend = backend if backend is not None else PynputBackend()
         self._bridge = EngineBridge()
         self._engine = ClickEngine(self._backend, self._bridge.callbacks())
         self._hotkeys = HotkeyConfig()
@@ -379,6 +380,17 @@ class MainWindow(QMainWindow):
         problems = profile.validate()
         if problems:
             QMessageBox.warning(self, "Cannot start", "\n".join(problems))
+            return
+
+        # Build the OS controllers here, on the GUI thread, before the engine
+        # thread touches them. pynput's macOS keyboard controller reads the
+        # current input source in its constructor, and that call is only legal
+        # on the main dispatch queue -- lazily constructed on the engine thread
+        # it does not raise, it traps the whole process.
+        try:
+            self._backend.prepare()
+        except BackendError as exc:
+            QMessageBox.critical(self, "Cannot start", str(exc))
             return
 
         if profile.safety.corner_failsafe:

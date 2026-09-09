@@ -293,6 +293,19 @@ GitHub Actions then builds both platforms and attaches them to a release.
 Skipping step 2 is the easy mistake: `uv sync --locked` refuses to run and every
 job fails before it reaches the tests.
 
+The release job runs the finished binary once with `--self-test` before
+uploading it. That catches the class of bug the unit tests structurally cannot:
+a module PyInstaller failed to bundle. The tests import from the source tree,
+where everything resolves; only the packaged app can be missing something. You
+can run the same check on a build you downloaded:
+
+```bash
+# macOS
+/Applications/Autoclicker.app/Contents/MacOS/Autoclicker --self-test
+# Windows (no console, so read the log it writes)
+$env:AUTOCLICKER_SELFTEST_LOG="selftest.log"; .\Autoclicker.exe --self-test
+```
+
 ### Icons
 
 `autoclicker/resources/icon.png` is the 1024×1024 master.

@@ -250,6 +250,14 @@ Pure-logic pytest suite, no real clicks:
 CI (GitHub Actions): ruff + pytest on ubuntu / macos / windows. GUI modules are
 import-guarded so headless CI doesn't need a display.
 
+The unit tests have one structural blind spot: they import from the source
+tree, where every import resolves whether or not PyInstaller would have found
+it. A bundle missing PySide6 is invisible to them and fatal to the user. So the
+release job runs the built binary itself with `--self-test`
+(`autoclicker/selftest.py`), which exercises the toolkit, a Qt platform plugin,
+the input library's platform backend, the bundled artwork and one real engine
+pass, from inside the frozen app.
+
 Manual checklist (in `docs/manual-testing.md`) covers the things a machine
 can't check: overlay picker accuracy on each monitor, hotkeys while another app
 is focused, panic key under a 1 ms click storm.
@@ -269,6 +277,7 @@ is focused, panic key under a 1 ms click storm.
 | **M6** ✅ | Sequences | Point table, ordered playback |
 | **M7** ✅ | Polish | Always-on-top, live achieved-rate counter, menu-bar/tray icon. The dark theme was dropped deliberately: Qt already follows the system appearance, and overriding it would force dark mode on someone who chose light |
 | **M8** ✅ | Packaging | PyInstaller specs, tagged release workflow producing `.app` + `.exe` |
+| **M9** ✅ | Keyboard mode, mini mode, packaged smoke test | Key and key-sequence spam, the collapsed window, and `--self-test` gating every release build |
 
 All milestones are done.
 

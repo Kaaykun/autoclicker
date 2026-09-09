@@ -407,8 +407,12 @@ class StubHotkeys:
         self.is_active = False
 
 
-def _window(tmp_path, recorder=None):
-    """A window with a throwaway config directory, never the user's real one."""
+def _window(tmp_path, recorder=None, backend=None):
+    """A window with a throwaway config directory, never the user's real one.
+
+    The backend is faked too, so nothing here can move the runner's pointer.
+    """
+    from autoclicker.core.backends import FakeBackend
     from autoclicker.core.profiles import ProfileStore, Settings
     from autoclicker.ui.main_window import MainWindow
 
@@ -417,6 +421,7 @@ def _window(tmp_path, recorder=None):
         settings=Settings(tmp_path),
         recorder=recorder,
         hotkey_manager=StubHotkeys(),
+        backend=backend if backend is not None else FakeBackend(),
     )
 
 
@@ -1069,3 +1074,26 @@ def test_percent_jitter_is_labelled_as_a_percentage(qt_app) -> None:
 
     widget.set_value(IntervalConfig(seconds=0, millis=100))
     assert not widget.jitter_amount.isEnabled(), "no jitter means nothing to set"
+
+
+def test_the_backend_is_prepared_on_the_gui_thread_before_the_engine_runs(
+    qt_app, tmp_path
+) -> None:
+    """pynput's macOS keyboard controller may only be constructed on the main
+    dispatch queue. Built lazily on the engine thread it traps the process, so
+    the window has to prepare the backend itself before handing it over."""
+    from autoclicker.core.backends import FakeBackend
+
+    backend = FakeBackend()
+    window = _window(tmp_path, backend=backend)
+    try:
+        assert backend.prepared is False
+
+        started: list[bool] = []
+        window._engine.start = lambda profile: started.append(backend.prepared)
+
+        window._start()
+
+        assert started == [True], "the engine started before prepare() ran"
+    finally:
+        window.close()

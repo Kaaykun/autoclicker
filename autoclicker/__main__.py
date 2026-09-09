@@ -1,7 +1,8 @@
 """Entry point: ``python -m autoclicker``.
 
 Opens the window by default. ``--cli`` (and any CLI flag) runs headless, which
-is also the automatic fallback if PySide6 is not installed.
+is also the automatic fallback if PySide6 is not installed. ``--self-test``
+checks that the build is complete and exits; see ``autoclicker/selftest.py``.
 """
 
 from __future__ import annotations
@@ -11,6 +12,11 @@ import sys
 
 def main() -> int:
     argv = sys.argv[1:]
+
+    if "--self-test" in argv:
+        from .selftest import run as self_test
+
+        return self_test()
 
     if "--cli" in argv:
         from .cli import main as cli_main
