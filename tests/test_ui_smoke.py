@@ -46,6 +46,11 @@ from autoclicker.ui.interval_widget import describe_rate  # noqa: E402
 def qt_app():
     app = QApplication.instance() or QApplication([])
     yield app
+    # Close and drain before the interpreter starts tearing down. Qt objects
+    # collected after that point are the other classic way a PySide6 suite
+    # aborts at exit rather than failing a test.
+    app.closeAllWindows()
+    app.processEvents()
 
 
 @pytest.fixture(autouse=True)
@@ -133,10 +138,8 @@ def test_target_widget_accepts_negative_coordinates(qt_app) -> None:
 # -------------------------------------------------------------- main window
 
 
-def test_main_window_builds_and_reports_a_runnable_profile(qt_app) -> None:
-    from autoclicker.ui.main_window import MainWindow
-
-    window = MainWindow()
+def test_main_window_builds_and_reports_a_runnable_profile(qt_app, tmp_path) -> None:
+    window = _window(tmp_path)
     try:
         assert window.windowTitle() == "Autoclicker"
         assert "Start" in window.start_button.text()
@@ -147,15 +150,13 @@ def test_main_window_builds_and_reports_a_runnable_profile(qt_app) -> None:
         window.close()
 
 
-def test_hotkey_failures_are_shown_inline_not_in_a_modal(qt_app) -> None:
+def test_hotkey_failures_are_shown_inline_not_in_a_modal(qt_app, tmp_path) -> None:
     """A modal here would deadlock the app before the window ever appears.
 
     On macOS without Input Monitoring this is not hypothetical: hotkey
     registration fails on every launch until the permission is granted.
     """
-    from autoclicker.ui.main_window import MainWindow
-
-    window = MainWindow()
+    window = _window(tmp_path)
     try:
         window._bridge.warningRaised.emit("hotkeys are unavailable")
         assert window.notice.text() == "hotkeys are unavailable"
@@ -286,6 +287,28 @@ def test_a_sequence_round_trips_through_the_target_widget(qt_app) -> None:
 # ------------------------------------------------------------------ profiles
 
 
+class StubHotkeys:
+    """Records bindings instead of registering them with the OS.
+
+    Registering for real starts a Quartz event tap on macOS, which needs Input
+    Monitoring that a CI runner has not granted. A test suite should not depend
+    on the machine's input permissions in any case.
+    """
+
+    def __init__(self) -> None:
+        self.bindings: dict = {}
+        self.is_active = False
+
+    def bind(self, bindings: dict) -> None:
+        self.bindings = dict(bindings)
+
+    def start(self) -> None:
+        self.is_active = True
+
+    def stop(self) -> None:
+        self.is_active = False
+
+
 def _window(tmp_path, recorder=None):
     """A window with a throwaway config directory, never the user's real one."""
     from autoclicker.core.profiles import ProfileStore, Settings
@@ -295,6 +318,7 @@ def _window(tmp_path, recorder=None):
         store=ProfileStore(tmp_path / "profiles"),
         settings=Settings(tmp_path),
         recorder=recorder,
+        hotkey_manager=StubHotkeys(),
     )
 
 

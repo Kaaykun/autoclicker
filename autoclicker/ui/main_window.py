@@ -70,7 +70,8 @@ POLL_INTERVAL_MS = 100
 class MainWindow(QMainWindow):
     def __init__(self, store: ProfileStore | None = None,
                  settings: Settings | None = None,
-                 recorder: ClickRecorder | None = None, parent=None) -> None:
+                 recorder: ClickRecorder | None = None,
+                 hotkey_manager: HotkeyManager | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Autoclicker")
         self.setWindowIcon(app_icon())
@@ -82,7 +83,13 @@ class MainWindow(QMainWindow):
         self._bridge = EngineBridge()
         self._engine = ClickEngine(self._backend, self._bridge.callbacks())
         self._hotkeys = HotkeyConfig()
-        self._hotkey_manager = HotkeyManager(on_error=self._bridge.warningRaised.emit)
+        # Injectable so tests never register real global hotkeys. On macOS
+        # that means a Quartz event tap, which needs Input Monitoring the
+        # runner has not granted -- and a test suite should not depend on
+        # the machine's input permissions either way.
+        self._hotkey_manager = hotkey_manager or HotkeyManager(
+            on_error=self._bridge.warningRaised.emit
+        )
         self._failsafe: CornerFailsafe | None = None
         self._overlay: PickerOverlay | None = None
         self._recorder = recorder if recorder is not None else ClickRecorder(
