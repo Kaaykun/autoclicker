@@ -57,7 +57,7 @@ from .hotkey_dialog import HotkeyDialog
 from .icons import app_icon, tray_icon
 from .interval_widget import IntervalWidget
 from .options_widget import OptionsWidget
-from .picker_overlay import PickerOverlay
+from .picker_overlay import PointPicker
 from .profile_bar import ProfileBar
 from .screens import screen_rects
 from .target_widget import TargetWidget
@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
             on_error=self._bridge.warningRaised.emit
         )
         self._failsafe: CornerFailsafe | None = None
-        self._overlay: PickerOverlay | None = None
+        self._picker: PointPicker | None = None
         self._recorder = recorder if recorder is not None else ClickRecorder(
             on_event=self._bridge.recordCountChanged.emit,
             ignore=self._is_over_this_window,
@@ -450,22 +450,22 @@ class MainWindow(QMainWindow):
         self.status.setText(f"Captured X {x}, Y {y}")
 
     def _pick_point(self) -> None:
-        if self._overlay is not None:
+        if self._picker is not None and self._picker.is_active:
             return
-        overlay = PickerOverlay(self._backend.position)
-        overlay.picked.connect(self._on_point_picked)
-        overlay.cancelled.connect(self._on_pick_cancelled)
-        self._overlay = overlay
-        overlay.start()
+        picker = PointPicker(self._backend.position, parent=self)
+        picker.picked.connect(self._on_point_picked)
+        picker.cancelled.connect(self._on_pick_cancelled)
+        self._picker = picker
+        picker.start()
 
     def _on_point_picked(self, x: int, y: int) -> None:
-        self._overlay = None
+        self._picker = None
         self.target.receive_point(x, y)
         self.raise_()
         self.activateWindow()
 
     def _on_pick_cancelled(self) -> None:
-        self._overlay = None
+        self._picker = None
         self.raise_()
         self.activateWindow()
 
@@ -678,8 +678,8 @@ class MainWindow(QMainWindow):
         self._hotkey_manager.stop()
         if self._failsafe is not None:
             self._failsafe.stop()
-        if self._overlay is not None:
-            self._overlay.finish()
+        if self._picker is not None:
+            self._picker.finish()
         if self._tray is not None:
             self._tray.hide()
         try:

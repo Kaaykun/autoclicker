@@ -25,6 +25,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # a bare Linux box. pytest.importorskip only skips on ModuleNotFoundError, so a
 # missing libEGL would fail collection instead of skipping.
 try:
+    from PySide6.QtCore import QRect
     from PySide6.QtWidgets import QApplication
 except ImportError as exc:  # pragma: no cover - depends on the machine
     pytest.skip(f"the Qt runtime is not available: {exc}", allow_module_level=True)
@@ -169,11 +170,107 @@ def test_the_picker_reports_backend_coordinates_not_qt_ones(qt_app) -> None:
     from autoclicker.ui.picker_overlay import PickerOverlay
 
     overlay = PickerOverlay(lambda: (1234, -567))
-    seen: list[tuple[int, int]] = []
-    overlay.picked.connect(lambda x, y: seen.append((x, y)))
-
     overlay._refresh_position()
     assert overlay._reported == (1234, -567)
+
+
+class FakeScreen:
+    """Stands in for a QScreen so multi-display behaviour can be tested."""
+
+    def __init__(self, rect: QRect) -> None:
+        self._rect = rect
+
+    def geometry(self) -> QRect:
+        return self._rect
+
+
+def test_the_picker_covers_every_display_with_its_own_window(qt_app) -> None:
+    """One window across all displays is what broke this.
+
+    macOS turns on "Displays have separate Spaces" by default, and under it a
+    single window cannot span two displays -- it is confined to one. The
+    picker then worked on whichever display it landed on and froze at the
+    boundary of every other.
+    """
+    from autoclicker.ui.picker_overlay import PointPicker
+
+    # A laptop below, an external display above it: the second screen sits at
+    # negative y, which is also where a naive union rectangle goes wrong.
+    screens = [
+        FakeScreen(QRect(0, 0, 1710, 1107)),
+        FakeScreen(QRect(0, -1080, 1920, 1080)),
+    ]
+    picker = PointPicker(lambda: (100, 100), screens=screens)
+    try:
+        picker.start()
+        assert len(picker.overlays) == 2, "one overlay per display"
+        assert [o.geometry() for o in picker.overlays] == [s.geometry() for s in screens]
+    finally:
+        picker.finish()
+    assert not picker.is_active
+
+
+def test_only_the_display_under_the_pointer_draws_a_crosshair(qt_app) -> None:
+    from autoclicker.ui.picker_overlay import PointPicker
+
+    screens = [FakeScreen(QRect(0, 0, 800, 600)), FakeScreen(QRect(800, 0, 800, 600))]
+    picker = PointPicker(lambda: (10, 10), screens=screens)
+    try:
+        picker.start()
+        first, second = picker.overlays
+        first.set_crosshair(True)
+        second.set_crosshair(True)
+
+        picker._on_pointer_moved(second)
+        assert second._crosshair
+        assert not first._crosshair
+    finally:
+        picker.finish()
+
+
+def test_picking_on_any_display_reports_once_and_tears_everything_down(qt_app) -> None:
+    from autoclicker.ui.picker_overlay import PointPicker
+
+    screens = [FakeScreen(QRect(0, 0, 800, 600)), FakeScreen(QRect(0, -600, 800, 600))]
+    picker = PointPicker(lambda: (-1500, -300), screens=screens)
+    seen: list[tuple[int, int]] = []
+    picker.picked.connect(lambda x, y: seen.append((x, y)))
+
+    picker.start()
+    # The second display, the one at negative coordinates.
+    picker.overlays[1].picked.emit(-1500, -300)
+
+    assert seen == [(-1500, -300)]
+    assert not picker.is_active, "every overlay comes down, not just the clicked one"
+
+
+def test_cancelling_on_any_display_tears_everything_down(qt_app) -> None:
+    from autoclicker.ui.picker_overlay import PointPicker
+
+    screens = [FakeScreen(QRect(0, 0, 800, 600)), FakeScreen(QRect(800, 0, 800, 600))]
+    picker = PointPicker(lambda: (10, 10), screens=screens)
+    cancelled: list[bool] = []
+    picker.cancelled.connect(lambda: cancelled.append(True))
+
+    picker.start()
+    picker.overlays[0].cancelled.emit()
+
+    assert cancelled == [True]
+    assert not picker.is_active
+
+
+def test_a_broken_position_provider_does_not_stop_the_picker_starting(qt_app) -> None:
+    from autoclicker.ui.picker_overlay import PointPicker
+
+    def explode() -> tuple[int, int]:
+        raise RuntimeError("Accessibility permission is not granted")
+
+    picker = PointPicker(explode, screens=[FakeScreen(QRect(0, 0, 800, 600))])
+    try:
+        picker.start()
+        assert len(picker.overlays) == 1
+    finally:
+        picker.finish()
 
 
 def test_a_broken_position_provider_does_not_crash_the_overlay(qt_app) -> None:

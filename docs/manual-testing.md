@@ -13,7 +13,11 @@ Things CI can't verify. Run before tagging a release.
 - [ ] 1 ms interval: UI reports the achieved rate honestly, app stays responsive
 
 ## Targeting
-- [ ] Picker overlay appears across all monitors
+- [ ] Picker overlay appears across all monitors, as a separate window per
+      display (one window spanning them all does not work on macOS, where
+      "Displays have separate Spaces" confines a window to one display)
+- [ ] The crosshair keeps following the pointer across the boundary between
+      displays, in both directions
 - [ ] Coordinates read back match where the click lands, on the primary display
 - [ ] Same, on a secondary display positioned left of / above the primary
 - [ ] Retina scaling: clicks land where the crosshair was, not at half/double offset

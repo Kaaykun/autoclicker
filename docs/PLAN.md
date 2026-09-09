@@ -288,9 +288,13 @@ CI or a headless runner, only by using the app.
    needed on any platform.
 3. **Very fast intervals** — below ~5 ms the bottleneck is the OS, not us. The
    UI reports the *achieved* rate so the number on screen is honest.
-4. **Overlay click-through on macOS** — a full-screen translucent window that
-   captures one click can behave oddly with Spaces/full-screen apps. The
-   capture-hotkey fallback exists precisely for this.
+4. **Overlay click-through on macOS** — *this one bit*. A single window sized
+   to the union of all displays cannot span them on macOS, because "Displays
+   have separate Spaces" is on by default and confines a window to one display.
+   The picker worked on whichever display the window landed on and froze at
+   every boundary. Fixed by giving each display its own overlay window, which
+   is what screenshot tools do for the same reason. The capture hotkey remains
+   as a fallback.
 5. **Sub-millisecond scheduling on Windows** — default timer resolution is
    ~15.6 ms; if this bites, `timeBeginPeriod(1)` via ctypes is the fix.
 
