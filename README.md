@@ -1,7 +1,8 @@
 # Autoclicker
 
-Clicks for you, on a timer. Set an interval, pick where to click, press a
-hotkey. It runs on macOS and Windows.
+Clicks for you, on a timer — or presses a key, or replays a whole sequence you
+recorded. Set an interval, pick what to repeat, press a hotkey. It runs on macOS
+and Windows.
 
 ![The Autoclicker window](docs/screenshot-macos.png)
 
@@ -82,9 +83,11 @@ update.** Annoying, and only a paid Apple Developer ID fixes it properly.
    and milliseconds. It starts at one click per second.
 2. **Click** — which mouse button, single or double click, and whether to repeat
    forever or a set number of times.
-3. **Target** — where to click. Either follow your cursor wherever it goes, or
+3. **What to repeat** — clicks, or key presses. Clicks need somewhere to aim,
+   so this decides whether the right-hand panel is Target or Keys.
+4. **Target** — where to click. Either follow your cursor wherever it goes, or
    lock a fixed point on screen, or run through a list of points in order.
-4. Press **Start**, or the `F6` key.
+5. Press **Start**, or the `F6` key.
 
 ### Hotkeys
 
@@ -152,8 +155,12 @@ repeat takes over, which is usually the point of holding a key.
 
 The **⤢** button next to the counter (or **Settings → Mini mode**) collapses
 the window to just the status, the counter and Start/Stop — handy once
-everything is set up and you only need to watch it. Press it again to expand.
-It is independent of *Keep window on top*, so set both if you want both.
+everything is set up and you only need to watch it. It shrinks to the smallest
+size that still fits those, so it tucks into a corner of the screen; press the
+button again and the window comes back exactly the size it was.
+
+Mini mode is remembered, so if you leave it collapsed it reopens that way. It is
+independent of *Keep window on top*, so set both if you want both.
 
 ### Saving your setup
 
@@ -195,6 +202,18 @@ looked into.
 **A game or website says autoclickers are not allowed.** Then they are not
 allowed — plenty of services forbid them in their terms of service. Where you
 point this is your call.
+
+**The app will not open at all.** Something went wrong with the download rather
+than with your machine. The app can check itself:
+
+```bash
+# macOS
+/Applications/Autoclicker.app/Contents/MacOS/Autoclicker --self-test
+```
+
+It prints a short list ending in *self-test passed* or *self-test failed*. If it
+fails, download the zip again; if it passes, the problem is a permission, so try
+**Help → Permissions…**.
 
 ---
 
@@ -238,7 +257,8 @@ uv run autoclicker --cli --check-pointer
 autoclicker/
 ├── core/        # engine, config, timing, input backends — no Qt imports
 ├── ui/          # PySide6 widgets — no timing-critical work
-└── resources/   # artwork
+├── resources/   # artwork
+└── selftest.py  # what the release job runs against the built binary
 tools/           # icon build, frozen-app launcher
 docs/            # design plan, manual test checklist
 ```
@@ -246,6 +266,18 @@ docs/            # design plan, manual test checklist
 `core/` is Qt-free and fully testable headless. The click backend is injectable,
 so the test suite never fires a real click. The GUI tests build real widgets
 against Qt's offscreen platform plugin, so they need no display.
+
+Two things the layering does not make obvious:
+
+- **The OS controllers are built on the GUI thread**, via `backend.prepare()`,
+  before the engine thread starts. pynput's macOS keyboard controller reads the
+  current keyboard layout in its constructor, and that call is legal only on the
+  main dispatch queue — built lazily on the engine thread it does not raise an
+  error, it kills the process.
+- **The tests cannot see a packaging bug.** They import from the source tree,
+  where everything resolves whether or not PyInstaller would have found it, so a
+  module missing from a bundle is invisible to them and fatal to the user. That
+  is what `--self-test` is for.
 
 ### Tests and linting
 

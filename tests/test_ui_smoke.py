@@ -1097,3 +1097,81 @@ def test_the_backend_is_prepared_on_the_gui_thread_before_the_engine_runs(
         assert started == [True], "the engine started before prepare() ran"
     finally:
         window.close()
+
+
+def test_mini_mode_shrinks_the_window_to_what_it_actually_needs(qt_app, tmp_path) -> None:
+    from autoclicker.ui.main_window import MINI_WIDTH
+
+    window = _window(tmp_path)
+    try:
+        window.show()
+        qt_app.processEvents()
+        expanded = window.height()
+
+        window.mini_button.setChecked(True)
+        qt_app.processEvents()
+
+        assert window.width() == MINI_WIDTH
+        assert window.height() == window.sizeHint().height()
+        assert window.height() < expanded / 2, "the collapsed window is still tall"
+    finally:
+        window.close()
+
+
+def test_a_late_platform_resize_does_not_leave_mini_mode_bloated(qt_app, tmp_path) -> None:
+    """macOS applies a window's new size constraints a turn late, so the
+    measurement taken while collapsing can still describe the expanded window.
+    The second pass on the next turn of the event loop is what saves it."""
+    window = _window(tmp_path)
+    try:
+        window.show()
+        qt_app.processEvents()
+
+        window.mini_button.setChecked(True)
+        fitted = window.height()
+
+        # Stand in for the platform ignoring the first resize.
+        window.resize(window.width(), 620)
+        qt_app.processEvents()
+
+        assert window.height() == fitted
+    finally:
+        window.close()
+
+
+def test_leaving_mini_mode_restores_the_previous_size(qt_app, tmp_path) -> None:
+    window = _window(tmp_path)
+    try:
+        window.show()
+        qt_app.processEvents()
+        before = window.size()
+
+        window.mini_button.setChecked(True)
+        qt_app.processEvents()
+        window.mini_button.setChecked(False)
+        qt_app.processEvents()
+
+        assert window.size() == before
+    finally:
+        window.close()
+
+
+def test_collapsing_again_refits_a_mini_window_the_user_enlarged(qt_app, tmp_path) -> None:
+    window = _window(tmp_path)
+    try:
+        window.show()
+        qt_app.processEvents()
+
+        window.mini_button.setChecked(True)
+        qt_app.processEvents()
+        fitted = window.height()
+
+        window.resize(window.width(), fitted + 200)
+        window.mini_button.setChecked(False)
+        qt_app.processEvents()
+        window.mini_button.setChecked(True)
+        qt_app.processEvents()
+
+        assert window.height() == fitted
+    finally:
+        window.close()

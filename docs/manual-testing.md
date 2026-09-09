@@ -99,7 +99,10 @@ input permissions and a human looking at it.
 
 ## Mini mode
 - [ ] The button collapses the window to the status row and Start button
-- [ ] The window actually shrinks rather than leaving a tall empty gap
+- [ ] The window actually shrinks rather than leaving a tall empty gap, and
+      lands on the smallest size that fits -- not the height it had before
+- [ ] The same when collapsing *after a run*, not only at launch: macOS applies
+      the new size constraints a turn late, and this is where that showed
 - [ ] Expanding restores the previous size
 - [ ] Mini mode does not change the "keep on top" setting
 - [ ] Mini mode is remembered on the next launch

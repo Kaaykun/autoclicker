@@ -69,6 +69,10 @@ from .theme import COLOR_COUNTDOWN, COLOR_ERROR, COLOR_IDLE, COLOR_RUNNING
 #: How often the counter refreshes while running.
 POLL_INTERVAL_MS = 100
 
+#: Width the collapsed window opens at. Narrow enough to tuck into a corner,
+#: wide enough that the status line and the counter both fit unelided.
+MINI_WIDTH = 320
+
 
 class MainWindow(QMainWindow):
     def __init__(self, store: ProfileStore | None = None,
@@ -554,7 +558,7 @@ class MainWindow(QMainWindow):
 
         self._settings_area.setVisible(not on)
         self._central_layout.setStretch(self._settings_stretch_index, 0 if on else 1)
-        self.setMinimumWidth(300 if on else 880)
+        self.setMinimumWidth(MINI_WIDTH if on else 880)
         self.setMinimumHeight(0)
 
         for widget in (self.mini_action, self.mini_button):
@@ -564,14 +568,37 @@ class MainWindow(QMainWindow):
         self.mini_button.setText("⤢" if not on else "⤡")
 
         if on:
-            # adjustSize alone is unreliable here, so ask the layout what it
-            # actually needs and resize to exactly that.
-            self.adjustSize()
-            hint = self.centralWidget().sizeHint().height()
-            self.resize(max(self.minimumWidth(), 320), max(hint, 1))
+            self._fit_to_contents()
+            # macOS does not apply the window's new size constraints until the
+            # next turn of the event loop, so the first measurement above can
+            # still describe the expanded window -- which is how mini mode
+            # opened at full height there while a headless runner measured it
+            # correctly. Measuring again once the platform has caught up costs
+            # nothing when the first pass already got it right.
+            QTimer.singleShot(0, self._fit_to_contents)
         elif self._expanded_size is not None:
             self.resize(self._expanded_size)
             self._expanded_size = None
+
+    def _fit_to_contents(self) -> None:
+        """Shrink the collapsed window to exactly what its widgets need.
+
+        Hiding a widget posts a layout request rather than resizing anything,
+        so both layouts have to be activated before anyone asks them how big
+        the window should be.
+        """
+        if not self.mini_button.isChecked():
+            return
+
+        for layout in (self._central_layout, self.layout()):
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+
+        width = max(self.minimumWidth(), MINI_WIDTH)
+        height = max(self.sizeHint().height(), self.minimumSizeHint().height(), 1)
+        if (self.width(), self.height()) != (width, height):
+            self.resize(width, height)
 
     # ----------------------------------------------------------------- tray
 
