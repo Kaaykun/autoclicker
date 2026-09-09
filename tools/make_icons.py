@@ -97,8 +97,13 @@ def with_macos_margin(image: Image.Image, canvas: int = 1024) -> Image.Image:
 
 def build_iconset(image: Image.Image, iconset: Path) -> None:
     if iconset.exists():
-        shutil.rmtree(iconset)
-    iconset.mkdir(parents=True)
+        try:
+            shutil.rmtree(iconset)
+        except OSError:
+            # Some sandboxes forbid deletes. The filenames are deterministic,
+            # so overwriting in place is just as complete.
+            pass
+    iconset.mkdir(parents=True, exist_ok=True)
     for size in ICNS_SIZES:
         for scale in (1, 2):
             pixels = size * scale
@@ -160,6 +165,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"wrote {RESOURCES / 'icon-square.png'}  (square, for Windows)")
 
     macos_art = master if args.no_macos_margin else with_macos_margin(master)
+    # Written into resources as well as the iconset, because Qt overrides the
+    # Dock tile at runtime -- see icons.py. The running app has to use the same
+    # framing as the bundle icon or it visibly grows the moment it launches.
+    macos_art.save(RESOURCES / "icon-macos.png")
+    print(f"wrote {RESOURCES / 'icon-macos.png'}  (inset, for macOS)")
+
     iconset = args.out / "icon.iconset"
     build_iconset(macos_art, iconset)
     icns = args.out / "icon.icns"

@@ -20,13 +20,21 @@ from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 RESOURCE_DIR = Path(__file__).resolve().parent.parent / "resources"
 
-#: Candidate filenames for user-supplied artwork, best first.
+#: Candidate filenames for user-supplied artwork, best first, per platform.
+#:
 #: Windows leads with the squared variant: it does not mask icons and has no
 #: corner convention, so baked-in rounded corners read as transparent notches
-#: against a taskbar highlight or an Explorer selection tint. macOS wants the
-#: rounded artwork, because it does not mask either and the curve is expected
-#: to be in the file.
+#: against a taskbar highlight or an Explorer selection tint.
+#:
+#: macOS leads with the inset variant, and this one is easy to get wrong.
+#: Setting a window icon on macOS *replaces the Dock tile of the running app*,
+#: overriding the .icns inside the bundle. Hand Qt the full-bleed master and
+#: the icon silently grows by a quarter the moment the app launches -- too big
+#: in the Dock, and too big for the Command-Tab switcher's selection outline.
+#: The runtime artwork has to carry Apple's 824-in-1024 margin, exactly like
+#: the bundle icon does.
 APP_ICON_NAMES_WINDOWS = ("icon-square.png", "icon.png", "icon.ico")
+APP_ICON_NAMES_MACOS = ("icon-macos.png", "icon.png", "icon.icns")
 APP_ICON_NAMES = ("icon.png", "icon.svg", "icon.icns")
 TRAY_ICON_NAMES = ("tray.png", "tray.svg")
 
@@ -44,7 +52,12 @@ def _first_existing(names: tuple[str, ...]) -> Path | None:
 
 def app_icon() -> QIcon:
     """The window, dock and taskbar icon."""
-    names = APP_ICON_NAMES_WINDOWS if sys.platform.startswith("win") else APP_ICON_NAMES
+    if sys.platform.startswith("win"):
+        names = APP_ICON_NAMES_WINDOWS
+    elif sys.platform == "darwin":
+        names = APP_ICON_NAMES_MACOS
+    else:
+        names = APP_ICON_NAMES
     supplied = _first_existing(names)
     if supplied is not None:
         return QIcon(str(supplied))
@@ -65,7 +78,9 @@ def tray_icon(running: bool) -> QIcon:
 
 
 def has_custom_artwork() -> bool:
-    return _first_existing(APP_ICON_NAMES + APP_ICON_NAMES_WINDOWS) is not None
+    return _first_existing(
+        APP_ICON_NAMES + APP_ICON_NAMES_WINDOWS + APP_ICON_NAMES_MACOS
+    ) is not None
 
 
 def _draw_app_placeholder(size: int) -> QPixmap:

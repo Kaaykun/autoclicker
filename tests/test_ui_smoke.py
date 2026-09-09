@@ -617,9 +617,11 @@ def test_the_supplied_artwork_is_picked_up(qt_app) -> None:
     assert icon.availableSizes(), "the icon should carry at least one real size"
 
 
-def test_windows_prefers_the_squared_artwork(qt_app, monkeypatch) -> None:
+def test_each_platform_gets_its_own_framing(qt_app, monkeypatch) -> None:
     """Windows does not mask icons, so baked-in rounded corners read as notches
-    against a taskbar highlight."""
+    against a taskbar highlight. macOS needs the inset variant, because setting
+    a window icon there replaces the running app's Dock tile -- hand it the
+    full-bleed master and the icon grows the moment the app launches."""
     from autoclicker.ui import icons
 
     monkeypatch.setattr(icons.sys, "platform", "win32")
@@ -627,8 +629,8 @@ def test_windows_prefers_the_squared_artwork(qt_app, monkeypatch) -> None:
     assert chosen is not None and chosen.name == "icon-square.png"
 
     monkeypatch.setattr(icons.sys, "platform", "darwin")
-    chosen = icons._first_existing(icons.APP_ICON_NAMES)
-    assert chosen is not None and chosen.name == "icon.png"
+    chosen = icons._first_existing(icons.APP_ICON_NAMES_MACOS)
+    assert chosen is not None and chosen.name == "icon-macos.png"
 
 
 def test_the_tray_glyph_differs_between_running_and_idle(qt_app) -> None:

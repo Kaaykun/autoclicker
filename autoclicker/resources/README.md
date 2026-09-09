@@ -8,6 +8,10 @@ folder is required — the app draws a placeholder when a file is missing.
 | `icon.png` | Window, dock and taskbar icon; source for the packaged `.icns` / `.ico` | Square PNG, 1024×1024, transparent background |
 | `tray.png` | Menu-bar / system-tray icon | Square PNG, 44×44, **black on transparent** |
 
+`icon-square.png` and `icon-macos.png` sit beside them and are **generated**
+by `tools/make_icons.py` — do not edit them by hand. They are committed so a
+fresh clone has the right icon on every platform without running the tool.
+
 `tray.png` is deliberately monochrome: macOS treats menu-bar icons as template
 images, throwing away the colour and recolouring the alpha channel to suit a
 light or dark menu bar. A colourful tray icon will come out as a silhouette.
