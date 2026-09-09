@@ -1,12 +1,13 @@
 """Remap the global hotkeys.
 
-Recording runs on pynput's listener thread, so every result comes back through
-a QObject's signals rather than touching widgets directly.
+Capture happens in Qt rather than through pynput -- see :mod:`key_capture` for
+why that matters on macOS. It also makes the interaction synchronous, so there
+is no listener thread to marshal results back from.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -17,17 +18,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.config import HotkeyConfig
-from ..core.hotkeys import HotkeyRecorder, format_hotkey
+from ..core.hotkeys import format_hotkey
 from ..core.platform_checks import is_macos
+from .key_capture import KeyCaptureDialog
 from .theme import COLOR_ERROR
 
 _PROMPT = "Press a combination…"
-
-
-class _RecorderSignals(QObject):
-    captured = Signal(str)
-    cancelled = Signal()
-    failed = Signal(str)
 
 
 class HotkeyDialog(QDialog):
@@ -40,7 +36,8 @@ class HotkeyDialog(QDialog):
         ("record", "Record a click sequence"),
     )
 
-    def __init__(self, config: HotkeyConfig, parent=None) -> None:
+    def __init__(self, config: HotkeyConfig, capture=None, parent=None) -> None:
+        """``capture`` is injectable so tests need no key press."""
         super().__init__(parent)
         self.setWindowTitle("Hotkeys")
         self.setModal(True)
@@ -48,17 +45,7 @@ class HotkeyDialog(QDialog):
         self._specs = {name: getattr(config, name) for name, _ in self.FIELDS}
         self._labels: dict[str, QLabel] = {}
         self._buttons: dict[str, QPushButton] = {}
-        self._recording: str | None = None
-
-        self._signals = _RecorderSignals()
-        self._signals.captured.connect(self._on_captured)
-        self._signals.cancelled.connect(self._on_cancelled)
-        self._signals.failed.connect(self._on_failed)
-        self._recorder = HotkeyRecorder(
-            on_captured=self._signals.captured.emit,
-            on_cancelled=self._signals.cancelled.emit,
-            on_error=self._signals.failed.emit,
-        )
+        self._capture = capture or KeyCaptureDialog.capture
 
         grid = QGridLayout()
         for row, (name, title) in enumerate(self.FIELDS):
@@ -101,33 +88,12 @@ class HotkeyDialog(QDialog):
     # ------------------------------------------------------------ recording
 
     def _record(self, name: str) -> None:
-        if self._recording is not None:
-            return
-        self._recording = name
-        self._labels[name].setText(_PROMPT)
-        for button in self._buttons.values():
-            button.setEnabled(False)
-        self._recorder.start()
-
-    def _finish_recording(self) -> None:
-        name, self._recording = self._recording, None
-        for button in self._buttons.values():
-            button.setEnabled(True)
-        if name is not None:
-            self._labels[name].setText(format_hotkey(self._specs[name]))
-
-    def _on_captured(self, spec: str) -> None:
-        if self._recording is not None:
-            self._specs[self._recording] = spec
-        self._finish_recording()
-        self._validate()
-
-    def _on_cancelled(self) -> None:
-        self._finish_recording()
-
-    def _on_failed(self, message: str) -> None:
-        self._finish_recording()
-        self._show_error(message)
+        """Ask for a key. Synchronous, because Qt owns the whole interaction."""
+        spec = self._capture(self, f"Press the key for “{dict(self.FIELDS)[name]}”")
+        if spec:
+            self._specs[name] = spec
+            self._labels[name].setText(format_hotkey(spec))
+            self._validate()
 
     # ----------------------------------------------------------- validation
 
@@ -147,20 +113,12 @@ class HotkeyDialog(QDialog):
         if self._validate():
             self.accept()
 
-    def reject(self) -> None:
-        self._recorder.stop()
-        super().reject()
-
-    def accept(self) -> None:
-        self._recorder.stop()
-        super().accept()
-
     @staticmethod
     def _platform_note() -> str:
         if is_macos():
             return (
-                "Escape cancels a recording. Function keys may need Fn held unless "
-                "“Use F1, F2, etc. as standard function keys” is switched on in "
-                "System Settings > Keyboard."
+                "Escape cancels. Function keys may need Fn held unless “Use F1, F2, "
+                "etc. as standard function keys” is switched on in System Settings > "
+                "Keyboard."
             )
-        return "Escape cancels a recording."
+        return "Escape cancels."

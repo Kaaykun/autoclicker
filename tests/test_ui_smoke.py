@@ -828,59 +828,51 @@ def test_the_keys_panel_round_trips(qt_app) -> None:
     assert widget.table.isVisibleTo(widget)
 
 
-class StubKeyRecorder:
-    """Arms without touching the OS, so captures can be driven by hand.
+class StubCapture:
+    """Stands in for the "press a key" dialog.
 
-    The real recorder installs a key hook, which fails instantly without input
-    permission and disarms itself -- correct behaviour, but it means a test
-    that drives a capture afterwards is testing nothing.
+    Capture is a modal dialog now rather than an OS-level hook -- pynput's
+    keyboard listener crashes Python on macOS when created while a Qt event
+    loop runs -- so a test only has to say what the user pressed.
     """
 
-    def __init__(self, on_captured=None, on_cancelled=None, on_error=None) -> None:
-        self.on_captured = on_captured
-        self.started = 0
+    def __init__(self, *specs: str | None) -> None:
+        self.specs = list(specs)
+        self.prompts: list[str] = []
 
-    def start(self) -> None:
-        self.started += 1
-
-    def stop(self) -> None:
-        pass
+    def __call__(self, parent=None, prompt: str = "") -> str | None:
+        self.prompts.append(prompt)
+        return self.specs.pop(0) if self.specs else None
 
 
 def test_a_recorded_key_lands_where_it_was_asked_for(qt_app) -> None:
     from autoclicker.core.config import KeyMode
     from autoclicker.ui.keys_widget import KeysWidget
 
-    widget = KeysWidget(recorder_factory=StubKeyRecorder)
+    capture = StubCapture("<ctrl>+v", "a", "b", "<f5>")
+    widget = KeysWidget(capture=capture)
 
-    # Single-key mode: the capture replaces the one key.
     widget.record_single_key()
-    widget._on_captured("<ctrl>+v")
     assert widget.value().spec == "<ctrl>+v"
     assert "Control" in widget.key_label.text() or "Ctrl" in widget.key_label.text()
 
-    # Sequence mode: -1 appends, an index replaces that row.
     widget.sequence.setChecked(True)
     widget.record_new_step()
-    widget._on_captured("a")
     widget.record_new_step()
-    widget._on_captured("b")
     assert [s.spec for s in widget.value().sequence] == ["a", "b"]
 
     widget.record_step(0)
-    widget._on_captured("<f5>")
     assert [s.spec for s in widget.value().sequence] == ["<f5>", "b"]
     assert widget.value().mode is KeyMode.SEQUENCE
 
 
-def test_a_cancelled_recording_changes_nothing(qt_app) -> None:
+def test_a_cancelled_capture_changes_nothing(qt_app) -> None:
     from autoclicker.ui.keys_widget import KeysWidget
 
-    widget = KeysWidget(recorder_factory=StubKeyRecorder)
+    capture = StubCapture("x", None)
+    widget = KeysWidget(capture=capture)
     widget.record_single_key()
-    widget._on_captured("x")
-    widget.record_single_key()
-    widget._on_cancelled()
+    widget.record_single_key()          # cancelled
     assert widget.value().spec == "x"
     assert widget.record_single.isEnabled(), "the button must come back"
 
@@ -1019,21 +1011,17 @@ def test_the_multi_click_gap_is_reachable_from_the_ui(qt_app) -> None:
     assert widget.click_value().inter_click_gap_ms == 40.0
 
 
-def test_a_capture_arriving_after_the_recording_ended_is_ignored(qt_app) -> None:
-    """The recorder can fail the moment it starts -- no Input Monitoring, say.
-
-    A key captured after that must not be applied to whatever row happens to
-    be selected, which is what an overloaded "not recording" sentinel caused.
-    """
+def test_recording_a_row_that_does_not_exist_is_a_no_op(qt_app) -> None:
     from autoclicker.core.config import KeyConfig, KeyMode, KeyStep
     from autoclicker.ui.keys_widget import KeysWidget
 
-    widget = KeysWidget()
+    capture = StubCapture("z")
+    widget = KeysWidget(capture=capture)
     widget.set_value(KeyConfig(mode=KeyMode.SEQUENCE, sequence=[KeyStep(spec="a")]))
 
-    widget._on_captured("z")  # nothing was recording
+    widget.record_step(7)
     assert [s.spec for s in widget.value().sequence] == ["a"]
-    assert widget.value().spec == "", "and the single key is untouched too"
+    assert capture.prompts == [], "it should not even ask"
 
 
 # ------------------------------------------------- the QVariant enum trap

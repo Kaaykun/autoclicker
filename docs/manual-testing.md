@@ -43,6 +43,11 @@ Things CI can't verify. Run before tagging a release.
 - [ ] Panic hotkey stops a 1 ms click storm immediately
 - [ ] Corner failsafe aborts the run
 - [ ] Remapped hotkey persists across a restart
+- [ ] Opening Hotkeys… and choosing a key does not crash (pynput cannot
+      create a keyboard listener while the Qt loop runs on macOS, so capture
+      is done in Qt; a crash here means something reintroduced a listener)
+- [ ] Pressing the start/stop key *while* choosing a new one does not start a run
+- [ ] On macOS, binding Control+K binds Control and not Command
 - [ ] The record hotkey starts and stops a recording
 - [ ] The Hotkeys… button in the Safety panel opens the same dialog as the menu
 

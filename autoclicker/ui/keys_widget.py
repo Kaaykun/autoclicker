@@ -4,14 +4,14 @@ Deliberately shaped like the Target panel, because it does the same job for
 the other action type: a choice between one thing repeated and a sequence
 walked in order, with a table for the sequence.
 
-Keys are captured with the same recorder the hotkey settings use, and stored
-in the same notation, so anything bindable as a hotkey is also sendable as a
-keystroke -- including chords like Ctrl+V.
+Keys are captured the same way the hotkey settings capture them -- in Qt, see
+:mod:`key_capture` -- and stored in pynput's notation, so anything bindable as
+a hotkey is also sendable as a keystroke, chords like Ctrl+V included.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -30,53 +30,27 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.config import KeyConfig, KeyMode, KeyStep
-from ..core.hotkeys import HotkeyRecorder, format_hotkey
+from ..core.hotkeys import format_hotkey
 from ..core.units import MILLISECONDS, SECONDS, format_duration, parse_duration
+from .key_capture import KeyCaptureDialog
 
 _COLUMNS = ("Key", "Hold", "Then wait")
 _HOLD_COLUMN = 1
 _DELAY_COLUMN = 2
-_PROMPT = "Press a key…"
-
-#: What a recording will do with the key it captures. None means idle --
-#: kept distinct from every real target, because the recorder can fail
-#: synchronously (no Input Monitoring) and a late capture must not then be
-#: applied to whatever happens to be selected.
-_TARGET_SINGLE = -2
-_TARGET_APPEND = -1
-
-
-class _RecorderSignals(QObject):
-    captured = Signal(str)
-    cancelled = Signal()
-    failed = Signal(str)
 
 
 class KeysWidget(QGroupBox):
     changed = Signal()
 
-    def __init__(self, recorder_factory=None, parent=None) -> None:
-        """``recorder_factory`` is injectable so tests never start a real
-        listener. Registering one means an OS-level key hook, which needs
-        permissions a CI runner has not granted -- and a test suite should not
-        depend on the machine's input permissions."""
+    def __init__(self, capture=None, parent=None) -> None:
+        """``capture`` is injectable so tests need no real key press."""
         super().__init__("Keys", parent)
 
         self._steps: list[KeyStep] = []
         self._single = KeyStep()
         self._rendering = False
-        self._recording_target: int | None = None
 
-        self._signals = _RecorderSignals()
-        self._signals.captured.connect(self._on_captured)
-        self._signals.cancelled.connect(self._on_cancelled)
-        self._signals.failed.connect(self._on_failed)
-        factory = recorder_factory or HotkeyRecorder
-        self._recorder = factory(
-            on_captured=self._signals.captured.emit,
-            on_cancelled=self._signals.cancelled.emit,
-            on_error=self._signals.failed.emit,
-        )
+        self._capture = capture or KeyCaptureDialog.capture
 
         # -- mode ---------------------------------------------------------
         self.single_key = QRadioButton("One key, repeated")
@@ -200,59 +174,33 @@ class KeysWidget(QGroupBox):
 
     def record_single_key(self) -> None:
         """Capture the one key used in single-key mode."""
-        self._record(_TARGET_SINGLE)
+        spec = self._ask("Press the key to repeat")
+        if spec:
+            self._single.spec = spec
+            self._render()
+            self.changed.emit()
 
     def record_new_step(self) -> None:
         """Capture a key and append it to the sequence."""
-        self._record(_TARGET_APPEND)
+        spec = self._ask("Press the key to add")
+        if spec:
+            self._steps.append(KeyStep(spec=spec))
+            self._render()
+            self.table.selectRow(len(self._steps) - 1)
+            self.changed.emit()
 
     def record_step(self, row: int) -> None:
         """Re-capture the key for an existing row."""
-        self._record(row)
-
-    def _record(self, target: int) -> None:
-        if self._recording_target is not None:
+        if not 0 <= row < len(self._steps):
             return
-        self._recording_target = target
-        if target == _TARGET_SINGLE:
-            self.key_label.setText(_PROMPT)
-            self.record_single.setEnabled(False)
-        else:
-            self.add_button.setText(_PROMPT)
-            self.add_button.setEnabled(False)
-        self._recorder.start()
+        spec = self._ask("Press the replacement key")
+        if spec:
+            self._steps[row].spec = spec
+            self._render()
+            self.changed.emit()
 
-    def _on_captured(self, spec: str) -> None:
-        target = self._recording_target
-        self._finish_recording()
-        if target is None:
-            # The recording already ended -- it failed to start, or was
-            # cancelled. Applying this key now would edit the wrong thing.
-            return
-
-        if target == _TARGET_SINGLE:
-            self._single.spec = spec
-        elif target == _TARGET_APPEND:
-            self._steps.append(KeyStep(spec=spec))
-        elif 0 <= target < len(self._steps):
-            self._steps[target].spec = spec
-        self._render()
-        self.changed.emit()
-
-    def _on_cancelled(self) -> None:
-        self._finish_recording()
-
-    def _on_failed(self, message: str) -> None:
-        self._finish_recording()
-        self.hint.setText(message)
-
-    def _finish_recording(self) -> None:
-        self._recording_target = None
-        self.record_single.setEnabled(True)
-        self.add_button.setEnabled(True)
-        self.add_button.setText("Add key…")
-        self.key_label.setText(format_hotkey(self._single.spec))
-        self._refresh_hint()
+    def _ask(self, prompt: str) -> str | None:
+        return self._capture(self, prompt)
 
     def _on_cell_double_clicked(self, row: int, column: int) -> None:
         if column == 0:

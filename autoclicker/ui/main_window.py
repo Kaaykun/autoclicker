@@ -685,10 +685,15 @@ class MainWindow(QMainWindow):
     # -------------------------------------------------------------- hotkeys
 
     def _edit_hotkeys(self) -> None:
-        # Stop listening first, or pressing F6 to record it would start a run.
-        self._hotkey_manager.stop()
-        dialog = HotkeyDialog(self._hotkeys, self)
-        self._apply_hotkeys(dialog.value() if dialog.exec() else self._hotkeys)
+        # Pause rather than stop: pressing F6 while choosing it must not start a
+        # run, but the listener can never be restarted safely once the Qt event
+        # loop is running. See core.hotkeys for why.
+        self._hotkey_manager.set_paused(True)
+        try:
+            dialog = HotkeyDialog(self._hotkeys, parent=self)
+            self._apply_hotkeys(dialog.value() if dialog.exec() else self._hotkeys)
+        finally:
+            self._hotkey_manager.set_paused(False)
 
     def _apply_hotkeys(self, config: HotkeyConfig) -> None:
         self._hotkeys = config

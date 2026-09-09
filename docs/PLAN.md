@@ -297,7 +297,16 @@ CI or a headless runner, only by using the app.
    every boundary. Fixed by giving each display its own overlay window, which
    is what screenshot tools do for the same reason. The capture hotkey remains
    as a fallback.
-5. **Sub-millisecond scheduling on Windows** — default timer resolution is
+5. **pynput keyboard listeners and Qt on macOS** — *this one bit, twice*.
+   Creating a pynput keyboard Listener while a Qt event loop is running crashes
+   Python on macOS: the Darwin backend queries the keyboard layout during
+   setup, and that call is main-queue-only, so the OS traps the process. It is
+   pynput #511/#512, open since 2022. Consequences for this app: key capture is
+   done in Qt (`ui/key_capture.py`), and the global hotkey listener is created
+   once before the loop starts and never recreated -- rebinding swaps its match
+   table, and suppressing hotkeys is a pause flag rather than a stop/start.
+
+6. **Sub-millisecond scheduling on Windows** — default timer resolution is
    ~15.6 ms; if this bites, `timeBeginPeriod(1)` via ctypes is the fix.
 
 ---

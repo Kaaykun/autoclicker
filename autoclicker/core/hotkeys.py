@@ -70,31 +70,55 @@ def format_hotkey(spec: str, *, platform: str | None = None) -> str:
 
 
 class HotkeyManager:
-    """Keeps a set of global hotkeys registered, and rebinds them on demand."""
+    """Keeps global hotkeys registered, and rebinds them without restarting.
+
+    The listener is created **once** and never recreated, which is not just
+    tidiness. Starting a pynput keyboard Listener while a Qt event loop is
+    running crashes Python on macOS -- the Darwin backend queries the keyboard
+    layout during setup, and that call is main-queue-only, so the OS traps the
+    process (pynput #511, #512, open since 2022). Constructing it before the
+    loop starts is safe; anything that would construct another one later is
+    not, and ``bind`` used to do exactly that.
+
+    So rebinding swaps the match table in place, and suppressing hotkeys while
+    the user is choosing a new one is a pause flag rather than a stop/start.
+    """
 
     def __init__(self, on_error: Callable[[str], None] | None = None) -> None:
         self._on_error = on_error
         self._bindings: dict[str, Callable[[], None]] = {}
+        self._hotkeys: list = []
         self._listener = None
+        self._paused = False
 
     @property
     def is_active(self) -> bool:
         return self._listener is not None
 
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def set_paused(self, paused: bool) -> None:
+        """Ignore hotkeys without tearing the listener down."""
+        self._paused = bool(paused)
+
     def bind(self, bindings: dict[str, Callable[[], None]]) -> None:
-        """Replace the whole binding set, restarting the listener if needed."""
+        """Replace the bindings. Safe to call at any time."""
         self._bindings = {spec: fn for spec, fn in bindings.items() if spec}
-        if self.is_active:
-            self.stop()
-            self.start()
+        self._rebuild()
 
     def start(self) -> None:
+        """Create the listener. Call once, before the GUI event loop starts."""
         if self.is_active or not self._bindings:
             return
         try:
             from pynput import keyboard
 
-            listener = keyboard.GlobalHotKeys(dict(self._bindings))
+            listener = keyboard.Listener(
+                on_press=self._on_press,
+                on_release=self._on_release,
+            )
             listener.daemon = True
             listener.start()
         except Exception as exc:  # pragma: no cover - platform dependent
@@ -107,9 +131,12 @@ class HotkeyManager:
                 self._on_error(message)
             return
         self._listener = listener
+        self._rebuild()
 
     def stop(self) -> None:
+        """Tear the listener down. Only on the way out -- it cannot be restarted."""
         listener, self._listener = self._listener, None
+        self._hotkeys = []
         if listener is None:
             return
         try:
@@ -117,105 +144,52 @@ class HotkeyManager:
         except Exception:  # pragma: no cover - platform dependent
             logger.exception("Could not stop the hotkey listener")
 
+    # ------------------------------------------------------------ internals
 
-class HotkeyRecorder:
-    """Captures the next key combination the user presses.
-
-    Modifiers alone never complete a recording -- you have to land on a real
-    key -- and a bare Escape cancels, which is what everyone expects.
-    """
-
-    def __init__(
-        self,
-        on_captured: Callable[[str], None],
-        on_cancelled: Callable[[], None] | None = None,
-        on_error: Callable[[str], None] | None = None,
-    ) -> None:
-        self._on_captured = on_captured
-        self._on_cancelled = on_cancelled
-        self._on_error = on_error
-        self._listener = None
-        self._modifiers: set[str] = set()
-
-    @property
-    def is_recording(self) -> bool:
-        return self._listener is not None
-
-    def start(self) -> None:
-        if self.is_recording:
-            return
-        self._modifiers = set()
+    def _rebuild(self) -> None:
+        """Rebuild the match table from the current bindings."""
         try:
             from pynput import keyboard
-
-            listener = keyboard.Listener(on_press=self._press, on_release=self._release)
-            listener.daemon = True
-            listener.start()
-        except Exception as exc:  # pragma: no cover - platform dependent
-            if self._on_error is not None:
-                self._on_error(f"Could not listen for key presses: {exc}")
-            return
-        self._listener = listener
-
-    def stop(self) -> None:
-        listener, self._listener = self._listener, None
-        if listener is not None:
-            try:
-                listener.stop()
-            except Exception:  # pragma: no cover - platform dependent
-                logger.exception("Could not stop the hotkey recorder")
-
-    # -- listener callbacks (these run on pynput's thread) -----------------
-
-    def _press(self, key: object) -> None:
-        name = _modifier_name(key)
-        if name is not None:
-            self._modifiers.add(name)
-            return
-
-        token = _key_token(key, self._listener)
-        if token is None:
-            return
-
-        if token == "<esc>" and not self._modifiers:
-            self.stop()
-            if self._on_cancelled is not None:
-                self._on_cancelled()
-            return
-
-        spec = canonical_spec(self._modifiers, token)
-        self.stop()
-        self._on_captured(spec)
-
-    def _release(self, key: object) -> None:
-        name = _modifier_name(key)
-        if name is not None:
-            self._modifiers.discard(name)
-
-
-def _modifier_name(key: object) -> str | None:
-    name = getattr(key, "name", None)
-    if name is None:
-        return None
-    return _MODIFIER_ALIASES.get(name)
-
-
-def _key_token(key: object, listener: object) -> str | None:
-    """Turn a pynput key into the token half of a hotkey spec."""
-    name = getattr(key, "name", None)
-    if name is not None:
-        return f"<{name}>"
-
-    # Ask pynput to normalise first: with a modifier held, ``char`` is often a
-    # control code rather than the letter that is physically pressed.
-    canonical = key
-    if listener is not None:
-        try:
-            canonical = listener.canonical(key)  # type: ignore[attr-defined]
         except Exception:  # pragma: no cover - platform dependent
-            canonical = key
+            return
+        hotkeys = []
+        for spec, callback in self._bindings.items():
+            try:
+                hotkeys.append(
+                    keyboard.HotKey(keyboard.HotKey.parse(spec), self._fire(callback))
+                )
+            except Exception:
+                logger.warning("Ignoring unparseable hotkey %r", spec, exc_info=True)
+        self._hotkeys = hotkeys
 
-    char = getattr(canonical, "char", None) or getattr(key, "char", None)
-    if char and char.isprintable():
-        return char.lower()
-    return None
+    def _fire(self, callback: Callable[[], None]) -> Callable[[], None]:
+        def activate() -> None:
+            if not self._paused:
+                callback()
+
+        return activate
+
+    def _canonical(self, key: object) -> object:
+        listener = self._listener
+        if listener is None:
+            return key
+        try:
+            return listener.canonical(key)  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - platform dependent
+            return key
+
+    def _on_press(self, key: object) -> None:
+        canonical = self._canonical(key)
+        for hotkey in self._hotkeys:
+            try:
+                hotkey.press(canonical)
+            except Exception:  # pragma: no cover - platform dependent
+                logger.exception("Hotkey press handling failed")
+
+    def _on_release(self, key: object) -> None:
+        canonical = self._canonical(key)
+        for hotkey in self._hotkeys:
+            try:
+                hotkey.release(canonical)
+            except Exception:  # pragma: no cover - platform dependent
+                logger.exception("Hotkey release handling failed")
