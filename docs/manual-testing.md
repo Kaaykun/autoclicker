@@ -68,3 +68,20 @@ Things CI can't verify. Run before tagging a release.
 - [ ] The packaged app can click and can register hotkeys (this is the one that
       catches a missing pynput backend in the bundle)
 - [ ] Gatekeeper: right-click → Open works on the first launch
+
+## Keyboard mode
+- [ ] A single key repeats into a focused text field
+- [ ] A chord works (Ctrl+V pastes repeatedly)
+- [ ] Hold long enough and the target app's own key repeat takes over
+- [ ] A key sequence presses in order and loops
+- [ ] Double-clicking a key in the table re-records that row
+- [ ] Per-step waits are honoured; 0 falls back to the interval
+- [ ] The counter says "presses", not "clicks"
+- [ ] Switching to keys does not complain about an empty click sequence
+
+## Mini mode
+- [ ] The button collapses the window to the status row and Start button
+- [ ] The window actually shrinks rather than leaving a tall empty gap
+- [ ] Expanding restores the previous size
+- [ ] Mini mode does not change the "keep on top" setting
+- [ ] Mini mode is remembered on the next launch

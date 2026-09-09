@@ -88,6 +88,19 @@ class ClickBackend(Protocol):
         """Press and release ``button`` ``count`` times."""
         ...
 
+    def press_key(self, spec: str, hold_ms: float = 0.0) -> None:
+        """Press and release a key or chord, in pynput hotkey notation."""
+        ...
+
+
+@dataclass
+class KeyRecord:
+    """One key press as seen by ``FakeBackend``."""
+
+    at: float
+    spec: str
+    hold_ms: float
+
 
 @dataclass
 class ClickRecord:
@@ -107,6 +120,7 @@ class FakeBackend:
         self._x, self._y = start_position
         self._clock = clock
         self.clicks: list[ClickRecord] = []
+        self.keys: list[KeyRecord] = []
         self.moves: list[tuple[int, int]] = []
 
     def position(self) -> tuple[int, int]:
@@ -125,6 +139,9 @@ class FakeBackend:
     ) -> None:
         self.clicks.append(ClickRecord(self._clock(), self._x, self._y, button, count))
 
+    def press_key(self, spec: str, hold_ms: float = 0.0) -> None:
+        self.keys.append(KeyRecord(self._clock(), spec, hold_ms))
+
 
 @dataclass
 class _PynputHandles:
@@ -132,6 +149,7 @@ class _PynputHandles:
 
     controller: object
     buttons: dict[MouseButton, object] = field(default_factory=dict)
+    keyboard: object | None = None
 
 
 class PynputBackend:
@@ -146,12 +164,13 @@ class PynputBackend:
         self._handles: _PynputHandles | None = None
         self._settle = settle
         self._settle_failures = 0
+        self._key_controller = None
 
     def _ensure(self) -> _PynputHandles:
         if self._handles is not None:
             return self._handles
         try:
-            from pynput import mouse
+            from pynput import keyboard, mouse
         except Exception as exc:  # pragma: no cover - platform dependent
             raise BackendError(f"Could not load the input backend (pynput): {exc}") from exc
 
@@ -162,6 +181,7 @@ class PynputBackend:
                 MouseButton.RIGHT: mouse.Button.right,
                 MouseButton.MIDDLE: mouse.Button.middle,
             },
+            keyboard=keyboard,
         )
         return self._handles
 
@@ -227,3 +247,48 @@ class PynputBackend:
             raise
         except Exception as exc:  # pragma: no cover - platform dependent
             raise BackendError(f"Could not send the click: {exc}") from exc
+
+    def press_key(self, spec: str, hold_ms: float = 0.0) -> None:
+        """Send a key or chord written in pynput hotkey notation.
+
+        Parsing goes through pynput's own ``HotKey.parse``, which is what the
+        hotkey settings already use, so anything bindable as a hotkey is also
+        sendable as a keystroke -- and modifiers are pressed and released in
+        the right order without this module knowing anything about them.
+        """
+        if not spec:
+            raise BackendError("No key was chosen.")
+        handles = self._ensure()
+        keyboard = handles.keyboard
+        if keyboard is None:  # pragma: no cover - platform dependent
+            raise BackendError("The keyboard backend is unavailable.")
+
+        try:
+            keys = keyboard.HotKey.parse(spec)  # type: ignore[attr-defined]
+        except Exception as exc:
+            raise BackendError(f"Could not understand the key “{spec}”: {exc}") from exc
+
+        controller = self._keyboard_controller(keyboard)
+        pressed: list[object] = []
+        try:
+            for key in keys:
+                controller.press(key)
+                pressed.append(key)
+            if hold_ms > 0:
+                time.sleep(hold_ms / 1000.0)
+        except Exception as exc:  # pragma: no cover - platform dependent
+            raise BackendError(f"Could not send the key: {exc}") from exc
+        finally:
+            # Release in reverse, and release whatever was actually pressed --
+            # a modifier left held down would poison every later keystroke and
+            # the user's own typing with it.
+            for key in reversed(pressed):
+                try:
+                    controller.release(key)
+                except Exception:  # pragma: no cover - platform dependent
+                    logger.warning("Could not release a held key", exc_info=True)
+
+    def _keyboard_controller(self, keyboard: object):
+        if getattr(self, "_key_controller", None) is None:
+            self._key_controller = keyboard.Controller()  # type: ignore[attr-defined]
+        return self._key_controller

@@ -33,9 +33,11 @@ beyond module stubs.
 
 ### Deferred (nice-to-have, tracked as later milestones)
 
-Session limits (stop after N minutes), live stats counter, system-tray icon,
-always-on-top mini mode, keyboard-key spam mode, drag support, sound feedback,
-scheduled start.
+Done since: live stats counter, system-tray icon, mini mode, keyboard mode
+(a single key or a sequence of keys).
+
+Still deferred: session limits (stop after N minutes), drag support, sound
+feedback, scheduled start.
 
 ---
 

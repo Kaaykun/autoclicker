@@ -15,10 +15,12 @@ import time
 from .core.backends import FakeBackend, PynputBackend, settle_pointer
 from .core.config import (
     DEFAULT_INTERVAL_SECONDS,
+    ActionType,
     ClickConfig,
     ClickType,
     IntervalConfig,
     JitterMode,
+    KeyConfig,
     MouseButton,
     Profile,
     RepeatConfig,
@@ -46,6 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
     jitter = timing.add_mutually_exclusive_group()
     jitter.add_argument("--jitter-percent", type=float, metavar="PCT")
     jitter.add_argument("--jitter-ms", type=float, metavar="MS")
+
+    keys = parser.add_argument_group("keyboard")
+    keys.add_argument(
+        "--key",
+        metavar="SPEC",
+        help="press a key instead of clicking, e.g. e, <f5>, '<ctrl>+v'",
+    )
+    keys.add_argument("--key-hold-ms", type=float, default=0.0)
 
     click = parser.add_argument_group("click")
     click.add_argument("--button", choices=[b.value for b in MouseButton], default="left")
@@ -111,6 +121,8 @@ def profile_from_args(args: argparse.Namespace) -> Profile:
 
     return Profile(
         name="cli",
+        action=ActionType.KEY if args.key else ActionType.CLICK,
+        key=KeyConfig(spec=args.key or "", hold_ms=args.key_hold_ms),
         interval=IntervalConfig(
             hours=components.get("hours", 0),
             minutes=components.get("minutes", 0),
@@ -219,11 +231,16 @@ def main(argv: list[str] | None = None) -> int:
         if not args.quiet:
             print(f"\rclicks: {total}  at ({x}, {y})   ", end="", flush=True)
 
+    def on_key(total: int, spec: str) -> None:
+        if not args.quiet:
+            print(f"\rpresses: {total}  {spec}   ", end="", flush=True)
+
     backend = FakeBackend() if args.dry_run else PynputBackend()
     engine = ClickEngine(
         backend,
         EngineCallbacks(
             on_click=on_click,
+            on_key=on_key,
             on_countdown=on_countdown,
             on_finished=on_finished,
             on_error=lambda message: print(f"\nerror: {message}", file=sys.stderr),

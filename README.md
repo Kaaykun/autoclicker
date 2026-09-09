@@ -3,10 +3,9 @@
 Clicks for you, on a timer. Set an interval, pick where to click, press a
 hotkey. It runs on macOS and Windows.
 
-![The Autoclicker window](docs/screenshot.png)
+![The Autoclicker window](docs/screenshot-macos.png)
 
-*The window follows your system's appearance, so it will look like a Mac app on
-a Mac and a Windows app on Windows.*
+*The window follows your system's appearance — dark or light, Mac or Windows.*
 
 ---
 
@@ -135,6 +134,27 @@ the task once and Autoclicker copies it.
 Untick **Keep recorded timing** if you would rather every step used the interval
 at the top instead of your own pauses.
 
+### Pressing keys instead of clicking
+
+Set **What to repeat** to *Press a key*. The right-hand panel switches from
+Target to Keys, because keystrokes go to whichever window has focus — there is
+nothing to aim at.
+
+- **One key, repeated** — press *Choose key…* and hit the key or combination.
+  Chords work: Ctrl+V, Cmd+S.
+- **Sequence of keys** — build a list with *Add key…*, and it is walked in
+  order then repeated. Double-click a key to re-record it.
+
+**Hold** keeps the key down. Hold it long enough and the target app's own key
+repeat takes over, which is usually the point of holding a key.
+
+### Mini mode
+
+The **⤢** button next to the counter (or **Settings → Mini mode**) collapses
+the window to just the status, the counter and Start/Stop — handy once
+everything is set up and you only need to watch it. Press it again to expand.
+It is independent of *Keep window on top*, so set both if you want both.
+
 ### Saving your setup
 
 The **Profile** row at the top saves everything as a named profile — **Save
@@ -201,6 +221,7 @@ There is also a headless mode for scripting:
 ```bash
 uv run autoclicker --cli --ms 250 -n 20 --button right --dry-run
 uv run autoclicker --cli --seconds 1 --at 840 500 --jitter-percent 15
+uv run autoclicker --cli --key '<ctrl>+v' --seconds 2 -n 10
 uv run autoclicker --cli --check-pointer
 ```
 

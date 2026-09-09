@@ -20,13 +20,35 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .backends import BackendError, ClickBackend
-from .config import Profile, TargetMode
+from .config import ClickType, KeyMode, MouseButton, Profile, TargetMode
 from .scheduler import DeadlineScheduler, jittered_interval_ms, jittered_position
+from .units import plural
 
 logger = logging.getLogger(__name__)
 
 #: Granularity of the pre-run countdown, in seconds.
 COUNTDOWN_TICK_S = 0.05
+
+
+@dataclass
+class _Step:
+    """One repetition's worth of work, whatever the action type.
+
+    Clicks and key presses differ only in what happens at the moment of firing;
+    the pacing, repeat counting and stop handling around them are identical, so
+    both are flattened into a list of these and driven by one loop.
+    """
+
+    is_key: bool = False
+    spec: str = ""
+    hold_ms: float = 0.0
+    x: int = 0
+    y: int = 0
+    follow_cursor: bool = False
+    button: MouseButton = MouseButton.LEFT
+    click_type: ClickType = ClickType.SINGLE
+    #: Overrides the global interval after this step when set.
+    delay_after_ms: float | None = None
 
 
 class EngineState(str, Enum):
@@ -48,8 +70,10 @@ class EngineCallbacks:
     """Hooks into the run. All optional, all called on the engine thread."""
 
     on_state: Callable[[EngineState], None] | None = None
-    #: (clicks_fired, x, y)
+    #: (actions_fired, x, y)
     on_click: Callable[[int, int, int], None] | None = None
+    #: (actions_fired, key spec) -- the keyboard equivalent of on_click.
+    on_key: Callable[[int, str], None] | None = None
     #: Seconds remaining before the first click.
     on_countdown: Callable[[float], None] | None = None
     #: (reason, human-readable detail)
@@ -178,64 +202,110 @@ class ClickEngine:
             if self._stop.wait(min(COUNTDOWN_TICK_S, remaining)):
                 return False
 
-    def _loop(self, profile: Profile, scheduler: DeadlineScheduler) -> tuple[StopReason, str]:
+    def _build_steps(self, profile: Profile) -> list[_Step]:
+        """Flatten whatever the profile describes into a list of repetitions."""
+        if profile.sends_keys:
+            key = profile.key
+            if key.mode is KeyMode.SEQUENCE:
+                return [
+                    _Step(
+                        is_key=True,
+                        spec=step.spec,
+                        hold_ms=step.hold_ms,
+                        delay_after_ms=step.delay_after_ms or None,
+                    )
+                    for step in key.sequence
+                ]
+            return [_Step(is_key=True, spec=key.spec, hold_ms=key.hold_ms)]
+
         target = profile.target
+        if target.mode is TargetMode.SEQUENCE:
+            return [
+                _Step(
+                    x=point.x,
+                    y=point.y,
+                    button=point.button,
+                    click_type=point.click_type,
+                    delay_after_ms=point.delay_after_ms or None,
+                )
+                for point in target.sequence
+            ]
+        return [
+            _Step(
+                x=target.x,
+                y=target.y,
+                follow_cursor=target.mode is TargetMode.FOLLOW_CURSOR,
+                button=profile.click.button,
+                click_type=profile.click.click_type,
+            )
+        ]
+
+    def _perform(self, step: _Step, profile: Profile) -> None:
+        """Fire one step and report it."""
+        if step.is_key:
+            self._backend.press_key(step.spec, step.hold_ms)
+            self.clicks_fired += 1
+            self._emit(self._callbacks.on_key, self.clicks_fired, step.spec)
+            return
+
+        jitter = profile.target.position_jitter_px
+        if step.follow_cursor:
+            x, y = self._backend.position()
+            if jitter > 0:
+                x, y = jittered_position(x, y, jitter, self._rng)
+                self._backend.move_to(x, y)
+        else:
+            x, y = jittered_position(step.x, step.y, jitter, self._rng)
+            self._backend.move_to(x, y)
+
+        self._backend.click(
+            step.button,
+            step.click_type.count,
+            profile.click.inter_click_gap_ms,
+            profile.click.hold_ms,
+        )
+        self.clicks_fired += 1
+        self._emit(self._callbacks.on_click, self.clicks_fired, x, y)
+
+    def _loop(self, profile: Profile, scheduler: DeadlineScheduler) -> tuple[StopReason, str]:
         repeat = profile.repeat
-        sequence = list(target.sequence) if target.mode is TargetMode.SEQUENCE else []
+        steps = self._build_steps(profile)
+        if not steps:
+            return StopReason.COMPLETED, "Nothing to do."
+
+        # A single step counts repetitions; a real sequence counts complete
+        # passes through it, which is what someone setting "repeat 5 times" on
+        # a four-point sequence means.
+        counts_passes = len(steps) > 1
+        noun = "pass" if counts_passes else ("press" if steps[0].is_key else "click")
         index = 0
 
         while not self._stop.is_set():
-            if sequence:
-                point = sequence[index]
-                button, click_type = point.button, point.click_type
-                x, y = jittered_position(point.x, point.y, target.position_jitter_px, self._rng)
-                self._backend.move_to(x, y)
-                delay_ms: float | None = point.delay_after_ms or None
-            else:
-                button, click_type = profile.click.button, profile.click.click_type
-                delay_ms = None
-                if target.mode is TargetMode.FIXED_POINT:
-                    x, y = jittered_position(
-                        target.x, target.y, target.position_jitter_px, self._rng
-                    )
-                    self._backend.move_to(x, y)
-                else:
-                    x, y = self._backend.position()
-                    if target.position_jitter_px > 0:
-                        x, y = jittered_position(x, y, target.position_jitter_px, self._rng)
-                        self._backend.move_to(x, y)
+            step = steps[index]
+            self._perform(step, profile)
 
-            self._backend.click(
-                button,
-                click_type.count,
-                profile.click.inter_click_gap_ms,
-                profile.click.hold_ms,
-            )
-            self.clicks_fired += 1
-            self._emit(self._callbacks.on_click, self.clicks_fired, x, y)
+            index += 1
+            if index >= len(steps):
+                index = 0
+                self.passes_completed += 1
 
-            if sequence:
-                index += 1
-                if index >= len(sequence):
-                    index = 0
-                    self.passes_completed += 1
-                    if not repeat.until_stopped and self.passes_completed >= repeat.count:
-                        return (
-                            StopReason.COMPLETED,
-                            f"Finished {self.passes_completed} passes "
-                            f"({self.clicks_fired} clicks).",
-                        )
-            elif not repeat.until_stopped and self.clicks_fired >= repeat.count:
-                return StopReason.COMPLETED, f"Finished {self.clicks_fired} clicks."
+            if not repeat.until_stopped:
+                done = self.passes_completed if counts_passes else self.clicks_fired
+                if done >= repeat.count:
+                    detail = f"Finished {done} {plural(noun, done)}."
+                    if counts_passes:
+                        detail += f" ({self.clicks_fired} actions.)"
+                    return StopReason.COMPLETED, detail
 
             interval_ms = (
-                delay_ms if delay_ms is not None
+                step.delay_after_ms
+                if step.delay_after_ms is not None
                 else jittered_interval_ms(profile.interval, self._rng)
             )
             if not scheduler.wait_for(interval_ms / 1000.0):
                 break
 
-        return self._requested_reason, f"Stopped after {self.clicks_fired} clicks."
+        return self._requested_reason, f"Stopped after {self.clicks_fired} actions."
 
     # ------------------------------------------------------------------ misc
 

@@ -11,9 +11,13 @@ import pytest
 
 from autoclicker.core.backends import BackendError, FakeBackend
 from autoclicker.core.config import (
+    ActionType,
     ClickConfig,
     ClickType,
     IntervalConfig,
+    KeyConfig,
+    KeyMode,
+    KeyStep,
     MouseButton,
     Profile,
     RepeatConfig,
@@ -284,3 +288,106 @@ def test_starting_twice_does_not_spawn_a_second_thread() -> None:
     assert engine._thread is first
     engine.stop()
     watcher.wait()
+
+
+# ---------------------------------------------------------------- key mode
+
+
+def key_profile(**overrides) -> Profile:
+    base = {
+        "action": ActionType.KEY,
+        "interval": IntervalConfig(seconds=0, millis=1),
+        "safety": SafetyConfig(countdown_seconds=0.0),
+        "repeat": RepeatConfig(until_stopped=False, count=4),
+        "key": KeyConfig(spec="e"),
+    }
+    base.update(overrides)
+    return Profile(**base)
+
+
+def test_a_single_key_is_pressed_the_requested_number_of_times() -> None:
+    _, backend, watcher = run_to_completion(key_profile())
+    assert [k.spec for k in backend.keys] == ["e"] * 4
+    assert backend.clicks == [], "key mode must not click"
+    assert watcher.reason is StopReason.COMPLETED
+
+
+def test_key_mode_never_moves_the_pointer() -> None:
+    """Keystrokes go to whatever window has focus; coordinates are meaningless."""
+    profile = key_profile(
+        target=TargetConfig(mode=TargetMode.FIXED_POINT, x=500, y=500),
+    )
+    _, backend, _ = run_to_completion(profile)
+    assert backend.moves == []
+
+
+def test_a_key_sequence_presses_in_order_and_counts_passes() -> None:
+    steps = [KeyStep(spec="a"), KeyStep(spec="<ctrl>+v"), KeyStep(spec="<f5>")]
+    profile = key_profile(
+        key=KeyConfig(mode=KeyMode.SEQUENCE, sequence=steps),
+        repeat=RepeatConfig(until_stopped=False, count=2),
+    )
+    engine, backend, watcher = run_to_completion(profile)
+
+    assert [k.spec for k in backend.keys] == ["a", "<ctrl>+v", "<f5>"] * 2
+    assert engine.passes_completed == 2
+    assert watcher.reason is StopReason.COMPLETED
+
+
+def test_a_key_step_can_override_the_interval() -> None:
+    steps = [KeyStep(spec="a", delay_after_ms=5), KeyStep(spec="b")]
+    profile = key_profile(
+        key=KeyConfig(mode=KeyMode.SEQUENCE, sequence=steps),
+        repeat=RepeatConfig(until_stopped=False, count=1),
+    )
+    _, backend, _ = run_to_completion(profile)
+    assert [k.spec for k in backend.keys] == ["a", "b"]
+
+
+def test_the_hold_duration_reaches_the_backend() -> None:
+    profile = key_profile(key=KeyConfig(spec="w", hold_ms=40.0),
+                          repeat=RepeatConfig(until_stopped=False, count=2))
+    _, backend, _ = run_to_completion(profile)
+    assert [k.hold_ms for k in backend.keys] == [40.0, 40.0]
+
+
+def test_key_mode_reports_through_the_key_callback() -> None:
+    backend = FakeBackend()
+    watcher = Watcher()
+    callbacks = watcher.callbacks()
+    seen: list[tuple[int, str]] = []
+    callbacks.on_key = lambda total, spec: seen.append((total, spec))
+    engine = ClickEngine(backend, callbacks)
+    engine.start(key_profile(repeat=RepeatConfig(until_stopped=False, count=3)))
+    watcher.wait()
+    assert seen == [(1, "e"), (2, "e"), (3, "e")]
+
+
+def test_key_mode_ignores_a_leftover_empty_click_sequence() -> None:
+    """Switching to keys must not be blocked by click settings you are not using."""
+    profile = key_profile(target=TargetConfig(mode=TargetMode.SEQUENCE, sequence=[]))
+    assert profile.validate() == []
+    _, backend, _ = run_to_completion(profile)
+    assert len(backend.keys) == 4
+
+
+def test_a_key_run_with_no_key_chosen_is_refused() -> None:
+    engine = ClickEngine(FakeBackend())
+    with pytest.raises(ValueError, match="Choose a key"):
+        engine.start(key_profile(key=KeyConfig(spec="")))
+
+
+def test_key_mode_stops_promptly_when_asked() -> None:
+    profile = key_profile(
+        interval=IntervalConfig(seconds=0, millis=5),
+        repeat=RepeatConfig(until_stopped=True),
+    )
+    backend = FakeBackend()
+    watcher = Watcher()
+    engine = ClickEngine(backend, watcher.callbacks())
+    engine.start(profile)
+    threading.Event().wait(0.1)
+    engine.stop()
+    watcher.wait()
+    assert len(backend.keys) > 1
+    assert not engine.is_running

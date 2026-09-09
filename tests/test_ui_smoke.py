@@ -31,6 +31,7 @@ except ImportError as exc:  # pragma: no cover - depends on the machine
     pytest.skip(f"the Qt runtime is not available: {exc}", allow_module_level=True)
 
 from autoclicker.core.config import (  # noqa: E402
+    ActionType,
     ClickConfig,
     ClickType,
     IntervalConfig,
@@ -103,7 +104,7 @@ def test_options_widget_round_trips(qt_app) -> None:
 
     click = ClickConfig(button=MouseButton.MIDDLE, click_type=ClickType.TRIPLE, hold_ms=25.0)
     repeat = RepeatConfig(until_stopped=False, count=42)
-    widget.set_value(click, repeat)
+    widget.set_value(ActionType.CLICK, click, repeat)
     assert widget.click_value() == click
     assert widget.repeat_value() == repeat
     assert widget.count.isEnabled()
@@ -785,3 +786,298 @@ def test_the_counter_reports_the_achieved_rate_while_running(qt_app, tmp_path) -
         assert window.counter.text() == "500 clicks"
     finally:
         window.close()
+
+
+# ------------------------------------------------------------------ keys
+
+
+def test_the_action_selector_swaps_the_right_hand_panel(qt_app, tmp_path) -> None:
+    """Keystrokes have nothing to aim at, so Target is meaningless in key mode."""
+    from autoclicker.core.config import ActionType
+
+    window = _window(tmp_path)
+    try:
+        assert window.action_panels.currentWidget() is window.target
+        assert window.options.click_options.isVisibleTo(window.options)
+
+        window.options.action.setCurrentIndex(
+            window.options.action.findData(ActionType.KEY)
+        )
+        assert window.action_panels.currentWidget() is window.keys
+        assert not window.options.click_options.isVisibleTo(window.options)
+    finally:
+        window.close()
+
+
+def test_the_keys_panel_round_trips(qt_app) -> None:
+    from autoclicker.core.config import KeyConfig, KeyMode, KeyStep
+    from autoclicker.ui.keys_widget import KeysWidget
+
+    widget = KeysWidget()
+    config = KeyConfig(
+        mode=KeyMode.SEQUENCE,
+        spec="<f5>",
+        hold_ms=30.0,
+        sequence=[
+            KeyStep(spec="a", hold_ms=10.0, delay_after_ms=250.0),
+            KeyStep(spec="<ctrl>+v"),
+        ],
+    )
+    widget.set_value(config)
+    assert widget.value() == config
+    assert widget.table.isVisibleTo(widget)
+
+
+class StubKeyRecorder:
+    """Arms without touching the OS, so captures can be driven by hand.
+
+    The real recorder installs a key hook, which fails instantly without input
+    permission and disarms itself -- correct behaviour, but it means a test
+    that drives a capture afterwards is testing nothing.
+    """
+
+    def __init__(self, on_captured=None, on_cancelled=None, on_error=None) -> None:
+        self.on_captured = on_captured
+        self.started = 0
+
+    def start(self) -> None:
+        self.started += 1
+
+    def stop(self) -> None:
+        pass
+
+
+def test_a_recorded_key_lands_where_it_was_asked_for(qt_app) -> None:
+    from autoclicker.core.config import KeyMode
+    from autoclicker.ui.keys_widget import KeysWidget
+
+    widget = KeysWidget(recorder_factory=StubKeyRecorder)
+
+    # Single-key mode: the capture replaces the one key.
+    widget.record_single_key()
+    widget._on_captured("<ctrl>+v")
+    assert widget.value().spec == "<ctrl>+v"
+    assert "Control" in widget.key_label.text() or "Ctrl" in widget.key_label.text()
+
+    # Sequence mode: -1 appends, an index replaces that row.
+    widget.sequence.setChecked(True)
+    widget.record_new_step()
+    widget._on_captured("a")
+    widget.record_new_step()
+    widget._on_captured("b")
+    assert [s.spec for s in widget.value().sequence] == ["a", "b"]
+
+    widget.record_step(0)
+    widget._on_captured("<f5>")
+    assert [s.spec for s in widget.value().sequence] == ["<f5>", "b"]
+    assert widget.value().mode is KeyMode.SEQUENCE
+
+
+def test_a_cancelled_recording_changes_nothing(qt_app) -> None:
+    from autoclicker.ui.keys_widget import KeysWidget
+
+    widget = KeysWidget(recorder_factory=StubKeyRecorder)
+    widget.record_single_key()
+    widget._on_captured("x")
+    widget.record_single_key()
+    widget._on_cancelled()
+    assert widget.value().spec == "x"
+    assert widget.record_single.isEnabled(), "the button must come back"
+
+
+def test_key_sequence_rows_reorder_and_remove(qt_app) -> None:
+    from autoclicker.core.config import KeyConfig, KeyMode, KeyStep
+    from autoclicker.ui.keys_widget import KeysWidget
+
+    widget = KeysWidget()
+    widget.set_value(KeyConfig(
+        mode=KeyMode.SEQUENCE,
+        sequence=[KeyStep(spec="a"), KeyStep(spec="b"), KeyStep(spec="c")],
+    ))
+    widget.table.selectRow(2)
+    widget._move(-1)
+    assert [s.spec for s in widget.value().sequence] == ["a", "c", "b"]
+
+    widget.table.selectRow(0)
+    widget._remove_selected()
+    assert [s.spec for s in widget.value().sequence] == ["c", "b"]
+
+
+def test_key_waits_and_holds_parse_like_the_click_sequence(qt_app) -> None:
+    from autoclicker.core.config import KeyConfig, KeyMode, KeyStep
+    from autoclicker.ui.keys_widget import KeysWidget
+
+    widget = KeysWidget()
+    widget.set_value(KeyConfig(mode=KeyMode.SEQUENCE, sequence=[KeyStep(spec="a")]))
+
+    widget.table.item(0, 2).setText("1.5")          # seconds column
+    assert widget.value().sequence[0].delay_after_ms == 1500.0
+    widget.table.item(0, 2).setText("250 ms")       # an explicit unit still wins
+    assert widget.value().sequence[0].delay_after_ms == 250.0
+    widget.table.item(0, 1).setText("40")           # hold is in milliseconds
+    assert widget.value().sequence[0].hold_ms == 40.0
+
+
+def test_a_key_profile_survives_a_round_trip_through_the_window(qt_app, tmp_path) -> None:
+    from autoclicker.core.config import ActionType, KeyConfig, KeyMode, KeyStep
+
+    window = _window(tmp_path)
+    try:
+        window.options.action.setCurrentIndex(
+            window.options.action.findData(ActionType.KEY)
+        )
+        window.keys.set_value(KeyConfig(
+            mode=KeyMode.SEQUENCE,
+            sequence=[KeyStep(spec="a", delay_after_ms=500)],
+        ))
+        window._store.save(window._profile("Keys"))
+        window._refresh_profiles("Keys")
+
+        window.options.action.setCurrentIndex(
+            window.options.action.findData(ActionType.CLICK)
+        )
+        window._load_profile("Keys")
+
+        profile = window._profile()
+        assert profile.action is ActionType.KEY
+        assert [s.spec for s in profile.key.sequence] == ["a"]
+        assert profile.validate() == []
+        assert window.action_panels.currentWidget() is window.keys
+    finally:
+        window.close()
+
+
+# -------------------------------------------------------------- mini mode
+
+
+def test_mini_mode_hides_the_settings_and_keeps_the_controls(qt_app, tmp_path) -> None:
+    window = _window(tmp_path)
+    try:
+        window.show()
+        assert window._settings_area.isVisible()
+
+        window.mini_button.setChecked(True)
+        assert not window._settings_area.isVisible()
+        assert window.status.isVisible()
+        assert window.counter.isVisible()
+        assert window.start_button.isVisible()
+
+        window.mini_button.setChecked(False)
+        assert window._settings_area.isVisible()
+    finally:
+        window.close()
+
+
+def test_the_mini_menu_item_and_button_stay_in_step(qt_app, tmp_path) -> None:
+    window = _window(tmp_path)
+    try:
+        window.mini_action.setChecked(True)
+        assert window.mini_button.isChecked()
+
+        window.mini_button.setChecked(False)
+        assert not window.mini_action.isChecked()
+    finally:
+        window.close()
+
+
+def test_mini_mode_leaves_the_pin_setting_alone(qt_app, tmp_path) -> None:
+    """Two independent toggles, deliberately: nothing changes behind your back."""
+    window = _window(tmp_path)
+    try:
+        assert not window.on_top_action.isChecked()
+        window.mini_button.setChecked(True)
+        assert not window.on_top_action.isChecked()
+    finally:
+        window.close()
+
+
+def test_mini_mode_is_remembered(qt_app, tmp_path) -> None:
+    window = _window(tmp_path)
+    window.mini_button.setChecked(True)
+    window.close()
+
+    again = _window(tmp_path)
+    try:
+        assert again.mini_button.isChecked()
+        assert not again._settings_area.isVisible()
+    finally:
+        again.close()
+
+
+# --------------------------------------------------- the gap setting is real
+
+
+def test_the_multi_click_gap_is_reachable_from_the_ui(qt_app) -> None:
+    """It existed in the config and engine with no control at all."""
+    from autoclicker.ui.options_widget import OptionsWidget
+
+    widget = OptionsWidget()
+    assert widget.click_value().inter_click_gap_ms == 0.0
+    assert widget.gap_ms.specialValueText() == "Native"
+
+    widget.gap_ms.setValue(40)
+    assert widget.click_value().inter_click_gap_ms == 40.0
+
+
+def test_a_capture_arriving_after_the_recording_ended_is_ignored(qt_app) -> None:
+    """The recorder can fail the moment it starts -- no Input Monitoring, say.
+
+    A key captured after that must not be applied to whatever row happens to
+    be selected, which is what an overloaded "not recording" sentinel caused.
+    """
+    from autoclicker.core.config import KeyConfig, KeyMode, KeyStep
+    from autoclicker.ui.keys_widget import KeysWidget
+
+    widget = KeysWidget()
+    widget.set_value(KeyConfig(mode=KeyMode.SEQUENCE, sequence=[KeyStep(spec="a")]))
+
+    widget._on_captured("z")  # nothing was recording
+    assert [s.spec for s in widget.value().sequence] == ["a"]
+    assert widget.value().spec == "", "and the single key is untouched too"
+
+
+# ------------------------------------------------- the QVariant enum trap
+
+
+def test_every_combo_hands_back_real_enum_members(qt_app) -> None:
+    """Qt round-trips combo data through QVariant, and a str Enum comes back a
+    plain str: equal to the member, never identical to it.
+
+    Every ``is`` comparison against such a value silently fails. That is what
+    left the action panel unswapped, and what labelled percent jitter in
+    milliseconds for several releases. This test pins the coercion.
+    """
+    from autoclicker.core.config import ActionType, ClickType, JitterMode, MouseButton
+    from autoclicker.ui.interval_widget import IntervalWidget
+    from autoclicker.ui.options_widget import OptionsWidget
+
+    options = OptionsWidget()
+    assert type(options.action_value()) is ActionType
+    assert type(options.click_value().button) is MouseButton
+    assert type(options.click_value().click_type) is ClickType
+
+    options.action.setCurrentIndex(options.action.findData(ActionType.KEY))
+    assert options.action_value() is ActionType.KEY, "identity, not just equality"
+
+    interval = IntervalWidget()
+    assert type(interval.value().jitter_mode) is JitterMode
+
+
+def test_percent_jitter_is_labelled_as_a_percentage(qt_app) -> None:
+    """The visible half of the same bug: it read "ms" and allowed 100000."""
+    from autoclicker.core.config import IntervalConfig, JitterMode
+    from autoclicker.ui.interval_widget import IntervalWidget
+
+    widget = IntervalWidget()
+    widget.set_value(IntervalConfig(seconds=0, millis=100,
+                                    jitter_mode=JitterMode.PERCENT, jitter_amount=20))
+    assert widget.jitter_amount.suffix() == " %"
+    assert widget.jitter_amount.maximum() == 100
+    assert widget.jitter_amount.isEnabled()
+
+    widget.set_value(IntervalConfig(seconds=0, millis=100,
+                                    jitter_mode=JitterMode.MILLIS, jitter_amount=30))
+    assert widget.jitter_amount.suffix() == " ms"
+
+    widget.set_value(IntervalConfig(seconds=0, millis=100))
+    assert not widget.jitter_amount.isEnabled(), "no jitter means nothing to set"

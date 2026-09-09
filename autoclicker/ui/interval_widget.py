@@ -13,7 +13,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ..core.config import FAST_INTERVAL_WARNING_MS, IntervalConfig, JitterMode
+from ..core.config import (
+    FAST_INTERVAL_WARNING_MS,
+    IntervalConfig,
+    JitterMode,
+    coerce_enum,
+)
 from .theme import COLOR_COUNTDOWN
 
 
@@ -85,7 +90,7 @@ class IntervalWidget(QGroupBox):
             minutes=self.minutes.value(),
             seconds=self.seconds.value(),
             millis=self.millis.value(),
-            jitter_mode=self.jitter_mode.currentData(),
+            jitter_mode=self._jitter_mode(),
             jitter_amount=self.jitter_amount.value(),
         )
 
@@ -109,8 +114,18 @@ class IntervalWidget(QGroupBox):
         self._refresh()
         self.changed.emit()
 
+    def _jitter_mode(self) -> JitterMode:
+        """Read the combo as a real enum member.
+
+        Qt round-trips a combo's data through QVariant, and a str Enum comes
+        back as a plain str. It compares equal to the member but is never
+        identical to it, so ``is`` comparisons silently fail -- which is how
+        percent jitter ended up labelled in milliseconds.
+        """
+        return coerce_enum(JitterMode, self.jitter_mode.currentData(), JitterMode.OFF)
+
     def _refresh(self) -> None:
-        mode = self.jitter_mode.currentData()
+        mode = self._jitter_mode()
         self.jitter_amount.setEnabled(mode is not JitterMode.OFF)
         if mode is JitterMode.PERCENT:
             self.jitter_amount.setSuffix(" %")

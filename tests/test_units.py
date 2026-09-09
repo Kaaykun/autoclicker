@@ -90,3 +90,21 @@ def test_large_counts_stay_readable() -> None:
     from autoclicker.core.units import format_counter
 
     assert format_counter(1234567).startswith("1,234,567 clicks")
+
+
+def test_the_counter_noun_follows_the_action() -> None:
+    from autoclicker.core.units import format_counter
+
+    assert format_counter(3, noun="press") == "3 presses"
+    assert format_counter(1, noun="press") == "1 press"
+    assert format_counter(1000, 10.0, "press") == "1,000 presses  ·  100/s"
+
+
+def test_plural_handles_the_nouns_this_app_uses() -> None:
+    from autoclicker.core.units import plural
+
+    assert plural("click", 1) == "click"
+    assert plural("click", 2) == "clicks"
+    assert plural("press", 1) == "press"
+    assert plural("press", 3) == "presses", "not 'presss'"
+    assert plural("pass", 2) == "passes"

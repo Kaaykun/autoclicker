@@ -60,14 +60,25 @@ def format_duration(millis: float, unit: str = SECONDS) -> str:
     return f"{value:g} {unit}"
 
 
-def format_counter(clicks: int, elapsed_s: float | None = None) -> str:
+def plural(noun: str, count: int) -> str:
+    """Enough English for the two nouns this app has: click and press."""
+    if count == 1:
+        return noun
+    return noun + ("es" if noun.endswith(("s", "x", "ch", "sh")) else "s")
+
+
+def format_counter(
+    clicks: int,
+    elapsed_s: float | None = None,
+    noun: str = "click",
+) -> str:
     """The click counter, with the rate actually achieved when known.
 
     The achieved rate is the honest one to show. Below roughly 5 ms the
     operating system, not this app, decides how fast clicks really go out, so a
     counter that echoed the requested rate back would be quietly lying.
     """
-    label = f"{clicks:,} click{'' if clicks == 1 else 's'}"
+    label = f"{clicks:,} {plural(noun, clicks)}"
     if elapsed_s is None or elapsed_s < 0.5 or clicks < 2:
         return label
     rate = clicks / elapsed_s

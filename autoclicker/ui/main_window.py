@@ -32,13 +32,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QStackedWidget,
     QSystemTrayIcon,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ..core.backends import PynputBackend
-from ..core.config import HotkeyConfig, Profile, SafetyConfig
+from ..core.config import ActionType, HotkeyConfig, Profile, SafetyConfig
 from ..core.engine import ClickEngine, EngineState, StopReason
 from ..core.failsafe import CornerFailsafe
 from ..core.hotkeys import HotkeyManager, format_hotkey
@@ -56,6 +58,7 @@ from .bridge import EngineBridge
 from .hotkey_dialog import HotkeyDialog
 from .icons import app_icon, tray_icon
 from .interval_widget import IntervalWidget
+from .keys_widget import KeysWidget
 from .options_widget import OptionsWidget
 from .picker_overlay import PointPicker
 from .profile_bar import ProfileBar
@@ -97,6 +100,7 @@ class MainWindow(QMainWindow):
             ignore=self._is_over_this_window,
         )
         self._recording = False
+        self._expanded_size = None
         self._tray: QSystemTrayIcon | None = None
         self._quitting = False
         self._run_started_at: float | None = None
@@ -127,6 +131,13 @@ class MainWindow(QMainWindow):
         self.interval = IntervalWidget()
         self.options = OptionsWidget()
         self.target = TargetWidget()
+        self.keys = KeysWidget()
+        # The right column carries whichever panel the action needs. Keystrokes
+        # have nothing to aim at, so Target is meaningless in key mode and Keys
+        # is meaningless in click mode; only one is ever relevant.
+        self.action_panels = QStackedWidget()
+        self.action_panels.addWidget(self.target)
+        self.action_panels.addWidget(self.keys)
         self.safety = _SafetyWidget()
 
         self.status = QLabel("Idle")
@@ -134,10 +145,19 @@ class MainWindow(QMainWindow):
         self.counter = QLabel("0 clicks")
         self.counter.setObjectName("counterLabel")
 
+        self.mini_button = QToolButton()
+        self.mini_button.setCheckable(True)
+        self.mini_button.setText("⤢")
+        self.mini_button.setToolTip(
+            "Mini mode — shrink to just the controls you need while running"
+        )
+        self.mini_button.toggled.connect(self._set_mini)
+
         status_row = QHBoxLayout()
         status_row.addWidget(self.status)
         status_row.addStretch(1)
         status_row.addWidget(self.counter)
+        status_row.addWidget(self.mini_button)
 
         self.start_button = QPushButton()
         self.start_button.setObjectName("primaryButton")
@@ -156,16 +176,27 @@ class MainWindow(QMainWindow):
         left.addStretch(1)
 
         right = QVBoxLayout()
-        right.addWidget(self.target)
+        right.addWidget(self.action_panels)
 
         columns = QHBoxLayout()
+        columns.setContentsMargins(0, 0, 0, 0)
         columns.addLayout(left, 1)
         columns.addLayout(right, 1)
+
+        # Everything above the status row lives in one container, so mini mode
+        # is a single setVisible rather than a list of widgets to keep in sync.
+        self._settings_area = QWidget()
+        self._settings_area.setLayout(columns)
 
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(self.notice)
-        layout.addLayout(columns, 1)
+        layout.addWidget(self._settings_area, 1)
+        # Kept so mini mode can drop the stretch. Hiding a widget frees its
+        # size but not its share of the spare space, so without this the
+        # collapsed window keeps a tall void where the settings used to be.
+        self._settings_stretch_index = layout.indexOf(self._settings_area)
+        self._central_layout = layout
         layout.addLayout(status_row)
         layout.addWidget(self.start_button)
         self.setCentralWidget(central)
@@ -187,6 +218,11 @@ class MainWindow(QMainWindow):
         self.on_top_action.setCheckable(True)
         self.on_top_action.toggled.connect(self._set_always_on_top)
         settings.addAction(self.on_top_action)
+
+        self.mini_action = QAction("Mini mode", self)
+        self.mini_action.setCheckable(True)
+        self.mini_action.toggled.connect(self.mini_button.setChecked)
+        settings.addAction(self.mini_action)
 
         self.keep_in_tray_action = QAction("Keep running when the window closes", self)
         self.keep_in_tray_action.setCheckable(True)
@@ -216,6 +252,8 @@ class MainWindow(QMainWindow):
         self._bridge.failsafeTripped.connect(self._on_failsafe)
 
         self.target.pickRequested.connect(self._pick_point)
+        self.options.actionChanged.connect(self._on_action_changed)
+        self.keys.changed.connect(self._on_edited)
         self.target.recordRequested.connect(self._toggle_recording)
         self.safety.hotkeysRequested.connect(self._edit_hotkeys)
 
@@ -236,8 +274,10 @@ class MainWindow(QMainWindow):
     def _profile(self, name: str | None = None) -> Profile:
         return Profile(
             name=name or self.profiles.current_name() or "Current",
+            action=self.options.action_value(),
             interval=self.interval.value(),
             click=self.options.click_value(),
+            key=self.keys.value(),
             repeat=self.options.repeat_value(),
             target=self.target.value(),
             safety=self.safety.value(),
@@ -248,8 +288,10 @@ class MainWindow(QMainWindow):
         self._applying = True
         try:
             self.interval.set_value(profile.interval)
-            self.options.set_value(profile.click, profile.repeat)
+            self.options.set_value(profile.action, profile.click, profile.repeat)
+            self.keys.set_value(profile.key)
             self.target.set_value(profile.target)
+            self._sync_action_panel()
             self.safety.set_value(profile.safety)
             self._apply_hotkeys(profile.hotkeys)
         finally:
@@ -315,6 +357,8 @@ class MainWindow(QMainWindow):
             self._load_profile(last)
         if stored.get("always_on_top"):
             self.on_top_action.setChecked(True)
+        if stored.get("mini"):
+            self.mini_button.setChecked(True)
         self.keep_in_tray_action.setEnabled(self._tray is not None)
         if stored.get("keep_in_tray") and self._tray is not None:
             self.keep_in_tray_action.setChecked(True)
@@ -404,11 +448,16 @@ class MainWindow(QMainWindow):
         self.notice.setText(message)
         self.notice.show()
 
+    def _action_noun(self) -> str:
+        return "press" if self.options.action_value() is ActionType.KEY else "click"
+
     def _refresh_counter(self) -> None:
         elapsed = None
         if self._run_started_at is not None:
             elapsed = time.monotonic() - self._run_started_at
-        self.counter.setText(format_counter(self._engine.clicks_fired, elapsed))
+        self.counter.setText(
+            format_counter(self._engine.clicks_fired, elapsed, self._action_noun())
+        )
         self._update_tray()
 
     def _refresh_labels(self) -> None:
@@ -420,6 +469,7 @@ class MainWindow(QMainWindow):
         for widget in (self.profiles, self.interval, self.options, self.safety):
             widget.setEnabled(not running and not self._recording)
         self.target.setEnabled(not running)
+        self.keys.setEnabled(not running)
         self.start_button.setEnabled(not self._recording)
         self.target.set_capture_hint(format_hotkey(self._hotkeys.capture))
         self.target.set_record_hotkey_label(format_hotkey(self._hotkeys.record))
@@ -469,6 +519,48 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    # --------------------------------------------------------------- action
+
+    def _on_action_changed(self, _value: str) -> None:
+        self._sync_action_panel()
+
+    def _sync_action_panel(self) -> None:
+        sends_keys = self.options.action_value() is ActionType.KEY
+        self.action_panels.setCurrentWidget(self.keys if sends_keys else self.target)
+        self._refresh_counter()
+
+    # ----------------------------------------------------------- mini mode
+
+    def _set_mini(self, on: bool) -> None:
+        """Collapse to the status line, counter and Start button.
+
+        Everything you want while it is running, nothing you want while setting
+        it up. The pin-on-top setting stays independent, deliberately.
+        """
+        if on and self._expanded_size is None:
+            self._expanded_size = self.size()
+
+        self._settings_area.setVisible(not on)
+        self._central_layout.setStretch(self._settings_stretch_index, 0 if on else 1)
+        self.setMinimumWidth(300 if on else 880)
+        self.setMinimumHeight(0)
+
+        for widget in (self.mini_action, self.mini_button):
+            widget.blockSignals(True)
+            widget.setChecked(on)
+            widget.blockSignals(False)
+        self.mini_button.setText("⤢" if not on else "⤡")
+
+        if on:
+            # adjustSize alone is unreliable here, so ask the layout what it
+            # actually needs and resize to exactly that.
+            self.adjustSize()
+            hint = self.centralWidget().sizeHint().height()
+            self.resize(max(self.minimumWidth(), 320), max(hint, 1))
+        elif self._expanded_size is not None:
+            self.resize(self._expanded_size)
+            self._expanded_size = None
+
     # ----------------------------------------------------------------- tray
 
     def _build_tray(self) -> None:
@@ -516,7 +608,7 @@ class MainWindow(QMainWindow):
         self._tray_toggle.setText("Stop" if running else "Start")
         self._tray.setToolTip(
             f"Autoclicker — {'running' if running else 'idle'}"
-            f"\n{format_counter(self._engine.clicks_fired)}"
+            f"\n{format_counter(self._engine.clicks_fired, noun=self._action_noun())}"
         )
 
     def _apply_tray_preference(self, enabled: bool) -> None:
@@ -566,6 +658,7 @@ class MainWindow(QMainWindow):
     def _finish_recording(self) -> None:
         events = self._recorder.stop()
         self._recording = False
+        self._expanded_size = None
         self._tray: QSystemTrayIcon | None = None
         self._quitting = False
         self._run_started_at: float | None = None
@@ -687,6 +780,7 @@ class MainWindow(QMainWindow):
                 last_profile=self.profiles.current_name(),
                 always_on_top=self.on_top_action.isChecked(),
                 keep_in_tray=self.keep_in_tray_action.isChecked(),
+                mini=self.mini_button.isChecked(),
             )
         except OSError:
             pass

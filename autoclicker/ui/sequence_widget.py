@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.config import ClickType, MouseButton, SequencePoint
+from ..core.config import ClickType, MouseButton, SequencePoint, coerce_enum
 from ..core.units import MILLISECONDS, SECONDS, format_duration, parse_duration
 
 _COLUMNS = ("X", "Y", "Button", "Click", "Then wait")
@@ -231,9 +231,9 @@ class SequenceEditor(QWidget):
         if self._rendering or not 0 <= row < len(self._points):
             return
         if column == 2:
-            self._points[row].button = value
+            self._points[row].button = coerce_enum(MouseButton, value, MouseButton.LEFT)
         else:
-            self._points[row].click_type = value
+            self._points[row].click_type = coerce_enum(ClickType, value, ClickType.SINGLE)
         self.changed.emit()
 
     # ---------------------------------------------------------- rendering
